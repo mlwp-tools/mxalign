@@ -413,6 +413,19 @@ array = [
 ]
 
 [[package]]
+name = "dask-jobqueue"
+version = "0.9.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "dask" },
+    { name = "distributed" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/32/2a/751bb5ba28533476b1c667eac158e5aa1840c416fd61d425328ef48a894a/dask_jobqueue-0.9.0.tar.gz", hash = "sha256:494ef64b7bb3848c7d72ed334c288030caca6a09dca54cfaa3f395f4ba7f5c47", size = 56475, upload-time = "2024-08-22T09:25:21.56Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/57/77/606f138bf70b14865842b3ec9a58dc1ba97153f466e5876fe4ced980f91f/dask_jobqueue-0.9.0-py2.py3-none-any.whl", hash = "sha256:253dfc4f0b8722201a08e05b841859dfeea1f6698ff21eff0d9370e5aa8ae20f", size = 52037, upload-time = "2024-08-22T09:25:20.106Z" },
+]
+
+[[package]]
 name = "debugpy"
 version = "1.8.20"
 source = { registry = "https://pypi.org/simple" }
@@ -1220,8 +1233,10 @@ name = "mxalign"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "bokeh" },
     { name = "cartopy" },
     { name = "dask" },
+    { name = "distributed" },
     { name = "earthkit-data" },
     { name = "h5netcdf" },
     { name = "h5py" },
@@ -1233,12 +1248,11 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-distributed = [
-    { name = "bokeh" },
-    { name = "distributed" },
-]
 earthkit = [
     { name = "earthkit-meteo" },
+]
+jobqueue = [
+    { name = "dask-jobqueue" },
 ]
 verification = [
     { name = "xskillscore" },
@@ -1251,10 +1265,11 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bokeh", marker = "extra == 'distributed'", specifier = ">=3.8.2" },
+    { name = "bokeh", specifier = ">=3.8.2" },
     { name = "cartopy", specifier = ">=0.25.0" },
     { name = "dask", specifier = ">=2026.1.2" },
-    { name = "distributed", marker = "extra == 'distributed'", specifier = ">=2026.1.2" },
+    { name = "dask-jobqueue", marker = "extra == 'jobqueue'", specifier = ">=0.9.0" },
+    { name = "distributed", specifier = ">=2026.1.2" },
     { name = "earthkit-data", specifier = ">=0.19.0" },
     { name = "earthkit-meteo", marker = "extra == 'earthkit'", specifier = ">=0.6.1" },
     { name = "h5netcdf", specifier = ">=1.8.1" },
@@ -1266,7 +1281,7 @@ requires-dist = [
     { name = "xskillscore", marker = "extra == 'verification'", specifier = ">=0.0.29" },
     { name = "zarr", specifier = "<3.0" },
 ]
-provides-extras = ["earthkit", "verification", "distributed"]
+provides-extras = ["earthkit", "verification", "jobqueue"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "ipykernel", specifier = ">=7.2.0" }]
