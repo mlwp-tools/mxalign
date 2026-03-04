@@ -1,6 +1,6 @@
 from earthkit.data.utils.patterns import Pattern
 
-class Dataset():
+class DatasetPath():
     def __init__(self, name, ds):
         self.name = name
         if ds.time.is_forecast():
@@ -21,6 +21,9 @@ class Dataset():
             ds_day = ds_month.sel(valid_time=ds_month.valid_time.dt.month==self.month)
             days = ds_day["valid_time"].groupby(ds_day["valid_time"].dt.day).count()
             self.day = int(days.isel(day=days.argmax())["day"].values)
+
+
+
             
     def substitute(self, path: str):
         pattern = Pattern(path)
@@ -35,7 +38,13 @@ class Dataset():
     
 def save_dataset(method, name, ds, **kwargs):
     save_fn = getattr(ds, method)
-    dataset = Dataset(name, ds)
+    dataset = DatasetPath(name, ds)
     path = dataset.substitute(kwargs.pop("path"))
     print(f"Saving to {path}")
-    #save_fn(path, **kwargs)
+    save_fn(path, **kwargs)
+
+def save_metrics(method, ds, **kwargs):
+    save_fn = getattr(ds, method)
+    path = kwargs.pop("path")
+    print(f"Saving to {path}")
+    save_fn(path, **kwargs)

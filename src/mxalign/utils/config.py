@@ -12,6 +12,7 @@ class Config():
             raise TypeError("config should be a dictionary.")
         self.dates = self.config.pop("dates", None)
         self._init_datasets()
+        print("Config initialized")
     
     def __getitem__(self, key):
         config = self.config.get(key, None)

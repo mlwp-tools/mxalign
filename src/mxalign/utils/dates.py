@@ -14,6 +14,7 @@ class Dates:
         reference_times = set()
         date = self._start
         while date <= self._end:
+            print(date)
             reference_times.add(date)
             delta = np.timedelta64(0,"s")
             while delta <= self._range:
@@ -30,8 +31,8 @@ class Dates:
         pattern = Pattern(path)
         paths = pattern.substitute(
                 dict(reference_time=self.reference_times),
-                dict(lead_time=self.lead_times),
-                dict(valid_time=self.valid_times),
+                # dict(lead_time=self.lead_times),
+                # dict(valid_time=self.valid_times),
                 allow_extra=True
             )
         return sorted(paths)

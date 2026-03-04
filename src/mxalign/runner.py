@@ -6,8 +6,10 @@ from .loaders.loader import load
 from .transformations.transform import transform
 from .align.time import align_time
 from .align.space import align_space
-from .utils.save import save_dataset
+from .align.nans import broadcast_nans
+from .utils.save import save_dataset, save_metrics
 from .verification import Metric
+
 
 
 class Runner():
@@ -16,59 +18,80 @@ class Runner():
         self.datasets = {}
     
     def run(self):
+        # 1. Load the datasets
         self.load_datasets()
+        
+        # 2. Transform the datasets
         self.transform_datasets()
         self.align()
         self.verify()
 
     def load_datasets(self):
-        config_datasets = self.config["datasets"]
-        for key, config in config_datasets.items():
-            config = config.copy()
+        config = self.config["datasets"]
+        if config is None:
+            return ValueError("No datasets section in the config.")
+        for name, config_ds in config.items():
+            config_ds = config_ds.copy()
             # Check if all the files exist
-            loader = config.pop("loader")
-            variables = config.pop("variables", None)
+            loader = config_ds.pop("loader")
+            variables = config_ds.pop("variables", None)
+            grid_mapping = config_ds.pop("grid_mapping", None)
             files = []
-            for file in config.pop("files"):
+            # Check if all the files exist
+            for file in config_ds.pop("files"):
                 if os.path.exists(file):
                     files.append(file)
                 else: 
                     print(f"File: {file} is missing, skipping.")
-            self.datasets[key] = load(
+            self.datasets[name] = load(
                 name=loader,
                 files=files,
                 variables=variables,
-                **config
+                grid_mapping=grid_mapping,
+                **config_ds
             )
     
     def transform_datasets(self):
-        config_transformations = self.config["transformations"]
-        for transformation, config in config_transformations.items():
-            config = config.copy()
-            keys = config.pop("datasets", self.datasets.keys())
-            for key in keys:
-                ds = self.datasets[key]
-                self.datasets[key] = transform(
+        config = self.config["transformations"]
+        if config is None:
+            pass
+        for transformation, config_trans in config.items():
+            config_trans = config_trans.copy()
+            # if no datasets specified, apply to all datasets
+            names_ds = config_trans.pop("datasets", self.datasets.keys())
+            for name in names_ds:
+                ds = self.datasets[name]
+                self.datasets[name] = transform(
                     name=transformation,
                     datasets=ds,
-                    **config
+                    **config_trans
                 )
 
     def align(self):
-        config_align = self.config["alignment"]
-        reference = config_align.pop("reference")
-        config_align_time = config_align.get("time",None)
-        config_align_space = config_align.get("space", None)
-        config_align_save = config_align.get("save", None)
+        config = self.config["alignment"]
+        reference = config.pop("reference")
+        brdcst_nans = config.pop("broadcast_nans", True)
+        config_align_time = config.get("time",None)
+        config_align_space = config.get("space", None)
+        config_align_save = config.get("save", None)
 
+        # align in time
         if config_align_time:
             self.align_time(config_align_time)
         else:
             print("Skipping temporal alignment")
+
+        # align in space
         if config_align_space:
             self.align_space(reference=reference, config=config_align_space)
         else:
             print("Skipping spatial alignment")
+
+        # broadcast NaNs
+        if brdcst_nans:
+            self.datasets = broadcast_nans(self.datasets)
+
+        # Save aligned datasets
         if config_align_save:
             config = config_align_save.copy()
             method = config.pop("method")
@@ -76,36 +99,62 @@ class Runner():
             if datasets == "all":
                 for name, ds in self.datasets.items():
                     save_dataset(method, name, ds, **config)
+            elif datasets == "merge":
+                ds = xr.concat(
+                    self.datasets.values(),
+                    dim = xr.Varialbe("model", list(self.datasets.keys()))
+                )
+                save_dataset(method, name, ds, **config)
+            else:
+                raise ValueError("Unknown option for dataset saving.")
     
     def verify(self):
-        config_verify = self.config["verification"]
-        reference = self.datasets[config_verify["reference"]]
-        metrics = {}
-        for metric_name, config in config_verify["metrics"].items():
-            config = config.copy()
-            func_path = config.pop("function")
-            inputs = config.pop("inputs")
-            metric = Metric(
-                name=metric_name,
-                func_path=func_path,
-                ds_ref=reference,
-                inputs=inputs,
-                **config
+        config = self.config["verification"]
+        reference = self.datasets[config["reference"]]
+        config_metrics = config.get("metrics", None)
+        config_save_metrics = config.get("save", None)
+
+        common_vars = set(reference.data_vars)
+        for ds in self.datasets.values():
+            common_vars.intersection_update(set(ds.data_vars))
+        common_vars = list(common_vars)
+
+        if config_metrics:
+            metrics = {}
+            for metric_name, config_metric in config["metrics"].items():
+                config_metric = config_metric.copy()
+                func_path = config_metric.pop("function")
+                inputs = config_metric.pop("inputs")
+                
+                metric = Metric(
+                    name=metric_name,
+                    func_path=func_path,
+                    ds_ref=reference[common_vars],
+                    inputs=inputs,
+                    **config_metric
+                )
+                models = {}
+                for ds_name, ds in self.datasets.items():
+                    if ds_name != config["reference"]:
+
+                        models[ds_name] = metric.compute(ds[common_vars])
+                models = xr.concat(
+                    models.values(),
+                    dim = xr.Variable("model", list(models.keys()))
+                )
+                metrics[metric.name] = models
+            metrics = xr.concat(
+                metrics.values(),
+                dim = xr.Variable("metric", list(metrics.keys()))
             )
-            models = {}
-            for ds_name, ds in self.datasets.items():
-                if ds_name != config_verify["reference"]:
-                    models[ds_name] = metric.compute(ds)
-            models = xr.concat(
-                models.values(),
-                dim = xr.Variable("model", list(models.keys()))
-            )
-            metrics[metric.name] = models
-        metrics = xr.concat(
-            metrics.values(),
-            dim = xr.Variable("metric", list(metrics.keys()))
-        )
-        self.metrics = metrics.transpose("model", "metric", ...)
+            self.metrics = metrics.transpose("model", "metric", ...).compute()
+        
+        if config_save_metrics:
+            config = config_save_metrics.copy()
+            method = config.pop("method")
+            save_metrics(method, self.metrics, **config)
+
+
     
     def align_time(self, config):
         self.datasets = align_time(self.datasets, **config)
@@ -114,10 +163,11 @@ class Runner():
         ds_ref = self.datasets[reference]
         for name, ds in self.datasets.items():
             if name != reference:
-                options = config.get(get_spatial_alignment(ds, ds_ref), None)
+                options = config.get(get_spatial_alignment(ds, ds_ref), {})
                 self.datasets[name] = align_space(ds, ds_ref, **options)
         
     
+
 def get_spatial_alignment(ds, reference):
     if reference.space.is_point() and ds.space.is_grid():
         return "interpolation"
