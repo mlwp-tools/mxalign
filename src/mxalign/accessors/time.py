@@ -53,8 +53,8 @@ def _align_forecast_forecast(ds1, ds2, only_common=False):
         ds1_aligned = ds1_aligned.sel(lead_time=common_lead_times)
         ds2_aligned = ds2_aligned.sel(lead_time=common_lead_times)
     else:
-        non_aligning_coords = (set(ds1.coords) | set(ds2.coords)) - set(["lead_time"])
-        ds1_aligned, ds2_aligned = xr.align(ds1_aligned, ds2_aligned, join="outer", exclude=non_aligning_coords)
+        non_aligning_dims = (set(ds1.dims) | set(ds2.dims)) - set(["lead_time"])
+        ds1_aligned, ds2_aligned = xr.align(ds1_aligned, ds2_aligned, join="outer", exclude=non_aligning_dims)
         ds1_aligned = ds1_aligned.time.add_valid_time()
         ds2_aligned = ds2_aligned.time.add_valid_time()
     return ds1_aligned, ds2_aligned
