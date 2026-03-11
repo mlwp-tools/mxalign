@@ -20,7 +20,7 @@ class AnemoiInferenceLoader(BaseLoader):
     def _load(self):
         import xarray as xr
         
-        files = [files] if isinstance(self.files, str) else self.files
+        files = [self.files] if isinstance(self.files, str) else self.files
         times = xr.open_dataset(files[0])["time"].values
         lead_times = times - times[0]    
 
