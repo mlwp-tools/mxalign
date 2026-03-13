@@ -22,13 +22,8 @@ def _extract_member_index(filename):
     """
     fname = Path(filename).stem  # Get filename without extension
     
-    # Try different patterns
     patterns = [
         r'_mbr(\d+)',        # _mbr000
-        r'_member(\d+)',     # _member0
-        r'_m(\d+)(?:_|\.)',  # _m000_
-        r'mbr(\d+)',         # mbr000
-        r'member(\d+)',      # member0
     ]
     
     for pattern in patterns:
@@ -45,12 +40,11 @@ class AnemoiInferenceLoader(BaseLoader):
     
     space = Space.GRID
     time=Time.FORECAST
-    uncertainty=Uncertainty.DETERMINISTIC  # Will be overridden based on data
+    uncertainty=Uncertainty.DETERMINISTIC
 
     def __init__(self, files, variables=None, grid_mapping=None, **kwargs):
         super().__init__(files, variables, grid_mapping, **kwargs)
-        # Detect uncertainty based on member presence
-        self._has_members = None  # Will be determined in _load()
+        self._has_members = None
 
     def _load(self):
         import xarray as xr
@@ -66,7 +60,7 @@ class AnemoiInferenceLoader(BaseLoader):
             # Load with member dimension
             ds = self._load_with_members(files, member_indices)
         elif not has_members:
-            # Load without member dimension (original behavior)
+            # Load without member dimension
             ds = self._load_deterministic(files)
         else:
             raise ValueError(
