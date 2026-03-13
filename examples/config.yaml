@@ -1,0 +1,74 @@
+dates:
+  start: 2020-02-01T00:00:00
+  end: 2020-03-01T00:00:00
+  period: 24h
+  range: 144h
+  step: 6h
+
+datasets:
+  la-1024-ea-00:
+    loader: anemoi-inference
+    files: /scratch/project_465000527/vandenbl/sg-la-comparison/inference-out/la-1024-01-ea-00/{reference_time:strftime(%Y%m%d%H)}.nc
+    #grid_mapping: CERRA
+    variables: ["2t","10u","10v","msl"]
+  cerra:
+    loader: anemoi-datasets
+    files: /scratch/project_465002133/datasets/cerra-rr-an-oper-0001-mars-5p5km-1984-2020-3h-v2-rmi.zarr
+    #grid_mapping: CERRA
+    variables: ["2t_2", "10u_10", "10v_10", "msl_0"]
+  # synop:
+  #   loader: mxalign
+  #   files: /scratch/project_465002133/datasets/observations/cerra_synops_2020.nc
+  #   variables: ["2t","10si","msl"]
+transformations:
+  rename:
+    rename_dict:
+      "2t": ["2t_2", "t2m"]
+      "10u": ["10u_10"]
+      "10v": ["10v_10"]
+      "msl": ["msl_0"]
+#   kelvin_to_celcius:
+#     datasets:
+#       - la-1024-ea-00
+#     variables: "2t"
+#   uv_to_speed:
+#     datasets:
+#       - la-1024-ea-00
+#     u: 10u
+#     v: 10v
+#     speed: 10si
+
+
+alignment:
+  broadcast_nans: False
+  reference: cerra
+  time:
+    return_as: forecast
+  space:
+    interpolation:
+      method: delaunay
+  # save:
+  #   method: to_netcdf
+  #   datasets: all
+  #   path: "{name}_{year:int(%02d)}.nc"
+
+verification:
+  reference: cerra
+  metrics:
+    rmse:
+      function: xskillscore.rmse
+      inputs:
+        a: forecast
+        b: reference
+      dim: ["reference_time","grid_index"]
+      skipna: True
+  save:
+    method: to_netcdf
+    path: "myfile.nc"
+
+
+
+
+
+    
+    

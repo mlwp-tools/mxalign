@@ -72,6 +72,7 @@ class MxAlignLoader(BaseLoader):
         import xarray as xr
 
         files = [self.files] if isinstance(self.files, str) else self.files
+        
         ds = xr.open_mfdataset(files, chunks="auto", **self.kwargs) 
         if "code" in ds.dims:
             ds = ds.rename_dims({"code":"point_index"}).transpose("valid_time","point_index")
