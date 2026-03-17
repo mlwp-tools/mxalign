@@ -173,14 +173,14 @@ def _align_grid_grid(ds1, ds2, **kwargs):
         return ds1, ds2
     elif np.allclose(ds1["longitude"].values, ds2["longitude"].values, atol=COORD_TOLERANCE) and np.allclose(ds1["latitude"].values, ds2["latitude"].values, atol=COORD_TOLERANCE):
         print(f"Some lat-lon coordinates differ. But the difference is smaller than {COORD_TOLERANCE} degrees, considering both grids as equal")
+        return ds1, ds2
     else:
         raise NotImplementedError("Regridding not implemented")
 
 def _align_grid_point(ds1, ds2, **kwargs):
     from ..interpolations.interpolate import interpolate
     method = kwargs.pop("method", "xarray")
-    ds1 = interpolate(ds1, ds2, method, **kwargs)
-    
+    ds1, ds2 = interpolate(ds1, ds2, method, **kwargs)
     return ds1, ds2
 
 def _align_point_point(ds1, ds2, **kwargs):

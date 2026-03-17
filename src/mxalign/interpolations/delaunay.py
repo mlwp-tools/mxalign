@@ -6,7 +6,7 @@ import xarray as xr
 from functools import partial
 
 from scipy.interpolate import LinearNDInterpolator
-from scipy.spatial import Delaunay
+from scipy.spatial import Delaunay, cKDTree
 from scipy.sparse import csr_matrix
 
 from .base import BaseInterpolator
@@ -27,18 +27,18 @@ class DelaunayInterpolator(BaseInterpolator):
         self._W_cache = {}  # keyed by source grid hash
         if  method != "linear":
             raise ValueError(f"Method: {method}. Delaunay interpolation only supports linear interpolation")
-    
+
     def _get_weights(self, source_points, target_points):
         key = (source_points.shape, source_points[0,0], source_points[-1,1])  # cheap fingerprint
         if key not in self._W_cache:
             triangulation = Delaunay(source_points)
             self._W_cache[key] = _build_weight_matrix(triangulation, source_points, target_points)
         return self._W_cache[key]
-    
+
     def _interpolate(self, source_dataset):
         if "grid_index" not in source_dataset.dims:
             raise NotImplementedError("Delaunay interpolation currently only supports stacked grids")
-        
+
         if "latitude" in source_dataset.dims:
             lon_grid, lat_grid = np.meshgrid(
                 source_dataset["longitude"].values, 
@@ -49,10 +49,50 @@ class DelaunayInterpolator(BaseInterpolator):
             source_points = np.column_stack(
               (source_dataset["latitude"].values, source_dataset["longitude"].values)
         )
-            
+
         target_points = np.column_stack(
             (self.target_dataset["latitude"].values, self.target_dataset["longitude"].values)
         )
+
+        # Remove target points outside the source grid domain.
+        # Pure convex-hull check is too permissive for projected grids (e.g. CERRA Lambert):
+        # hull-boundary triangles span large off-domain areas.  We also reject points whose
+        # containing simplex is much larger than a typical grid-cell triangle.
+        triangulation = Delaunay(source_points)
+        simplex_indices = triangulation.find_simplex(target_points)
+
+        pts = source_points[triangulation.simplices]          # (n_simplex, 3, 2)
+        v1 = pts[:, 1] - pts[:, 0]
+        v2 = pts[:, 2] - pts[:, 0]
+        areas = 0.5 * np.abs(v1[:, 0] * v2[:, 1] - v1[:, 1] * v2[:, 0])
+        area_threshold = np.median(areas) * 1.5
+
+        safe_idx = np.where(simplex_indices >= 0, simplex_indices, 0)
+        outside_mask = (simplex_indices == -1) | (areas[safe_idx] > area_threshold)
+
+        if outside_mask.any():
+            print(f"{outside_mask.sum()}/{len(target_points)} target points are outside the source grid and are removed.")
+            inside_mask = ~outside_mask
+            self.target_dataset = self.target_dataset.isel(point_index=inside_mask)
+            target_points = target_points[inside_mask]
+
+        # Distance check: remove stations farther than max_distance km from any source point.
+        # This is the ultimate guard against extrapolation at domain edges.
+        max_distance = self.options.get("max_distance", None)
+        if max_distance is not None and len(target_points) > 0:
+            tree = cKDTree(source_points)
+            _, nn_idx = tree.query(target_points)
+            nn = source_points[nn_idx]
+            lat1, lon1 = np.radians(target_points[:, 0]), np.radians(target_points[:, 1])
+            lat2, lon2 = np.radians(nn[:, 0]), np.radians(nn[:, 1])
+            a = np.sin((lat2 - lat1) / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin((lon2 - lon1) / 2) ** 2
+            dist_km = 2 * 6371.0 * np.arcsin(np.sqrt(a))
+            far_mask = dist_km > max_distance
+            if far_mask.any():
+                print(f"{far_mask.sum()}/{len(target_points)} target points are farther than {max_distance} km from the nearest source point and are removed.")
+                close_mask = ~far_mask
+                self.target_dataset = self.target_dataset.isel(point_index=close_mask)
+                target_points = target_points[close_mask]
 
         # Compute triangulation and sparse weight matrix ONCE, shared across all variables
         W = self._get_weights(source_points, target_points)
@@ -125,16 +165,16 @@ def _build_weight_matrix(
     vals[np.repeat(outside, ndim + 1)] = np.nan
 
     W = csr_matrix((vals, (rows, cols)), shape=(n_target, n_source))
-    
+
     print("Done")
 
     return W
 
 
-def interpolate_da(da: xr.DataArray, W: csr_matrix, target_points: np.ndarray) -> xr.DataArray:    
+def interpolate_da(da: xr.DataArray, W: csr_matrix, target_points: np.ndarray) -> xr.DataArray:
     n_target = len(target_points)
     leading_dims = da.dims[:-1]
-    
+
     # Validate that grid_index is not chunked
     if isinstance(da.data, dda.Array):
         grid_chunks = dict(zip(da.dims, da.chunks)).get("grid_index")
@@ -166,7 +206,7 @@ def interpolate_da(da: xr.DataArray, W: csr_matrix, target_points: np.ndarray) -
         dims=leading_dims + ("point_index", ),
         coords={d: da.coords[d].load() for d in leading_dims} 
         )
-    
+
     # Drop coords tied to grid_index to avoid dimension mismatch in map_blocks
     spatial_coords = [c for c in da.coords if "grid_index" in da[c].dims]
     da_clean = da.drop_vars(spatial_coords)
@@ -186,7 +226,7 @@ def interpolate_block(
     data = block.values # shape = (.., npoints)
     original_shape = data.shape[:-1]
     data_flat = data.reshape(-1, data.shape[-1]) # shape = (ndim1 * ndim2 * ... , npoints)
-    
+
     # Identify NaN source points
     nan_mask = np.isnan(data_flat)  # (nleading, n_source)
 
@@ -201,7 +241,7 @@ def interpolate_block(
     new_dims   = block.dims[:-1] + ("point_index",)
     new_coords = {dim: block.coords[dim] for dim in block.dims[:-1]}
     return xr.DataArray(interpolated, dims=new_dims, coords=new_coords)
-        
-        
+
+
 
 

@@ -11,7 +11,6 @@ def interpolate(source_datasets, target_dataset, method, **kwargs):
         if not isinstance(source_datasets, list):
             datasets = [source_datasets]
         keys = None
-    
 
     if keys:
         interpolated_datasets = dict()
@@ -24,4 +23,6 @@ def interpolate(source_datasets, target_dataset, method, **kwargs):
                 interpolator.interpolate(ds.copy())
             )
     interpolated_datasets = interpolated_datasets[0] if len(interpolated_datasets) == 1 else interpolated_datasets
-    return (interpolated_datasets)
+    # Return the (possibly filtered) target_dataset alongside the interpolated result
+    # so callers can keep the reference dataset in sync when stations are dropped.
+    return interpolated_datasets, interpolator.target_dataset

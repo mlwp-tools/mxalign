@@ -26,10 +26,11 @@ class ObstableLoader(BaseLoader):
 
 
     def _load(self):
-        if isinstance(self.files, list) and len(self.files > 1):
+        files = [self.files] if isinstance(self.files, str) else self.files
+        if len(files) > 1:
             raise NotImplementedError("Reading from mutliple SQLite-files not implemented")
-    
-        conn = sqlite3.connect(self.files)
+
+        conn = sqlite3.connect(files[0])
 
         if self.variables is None:
             # Retrieve all variables

@@ -164,7 +164,8 @@ class Runner():
         for name, ds in self.datasets.items():
             if name != reference:
                 options = config.get(get_spatial_alignment(ds, ds_ref), {})
-                self.datasets[name] = align_space(ds, ds_ref, **options)
+                self.datasets[name], ds_ref = align_space(ds, ds_ref, **options)
+        self.datasets[reference] = ds_ref
         
     
 

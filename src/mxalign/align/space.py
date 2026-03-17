@@ -12,16 +12,16 @@ def align_space(datasets, reference, **kwargs):
     else:
         keys = None
 
-    datasets = [
-        ds.space.align_with(reference, **kwargs)[0]
-        for ds in datasets
-    ]
+    aligned = [ds.space.align_with(reference, **kwargs) for ds in datasets]
+    # align_with returns (aligned_ds, filtered_reference); keep the last filtered reference
+    datasets = [ds for ds, _ in aligned]
+    reference = aligned[-1][1]
 
     if keys is None:
-        if len(datasets)==1 :
-            return datasets[0]
+        if len(datasets) == 1:
+            return datasets[0], reference
         else:
-            return datasets
+            return datasets, reference
     else:
-        return {key: value for (key, value) in zip(keys, datasets)}
+        return {key: value for (key, value) in zip(keys, datasets)}, reference
         
