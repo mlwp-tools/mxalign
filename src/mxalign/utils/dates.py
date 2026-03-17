@@ -14,7 +14,7 @@ class Dates:
         reference_times = set()
         date = self._start
         while date <= self._end:
-            print(date)
+            #print(date)
             reference_times.add(date)
             delta = np.timedelta64(0,"s")
             while delta <= self._range:
