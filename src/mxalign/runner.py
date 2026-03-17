@@ -36,6 +36,7 @@ class Runner():
             loader = config_ds.pop("loader")
             variables = config_ds.pop("variables", None)
             grid_mapping = config_ds.pop("grid_mapping", None)
+            ens_size = config_ds.pop("ens_size", 1)
             files = []
             # Check if all the files exist
             for file in config_ds.pop("files"):
@@ -48,6 +49,7 @@ class Runner():
                 files=files,
                 variables=variables,
                 grid_mapping=grid_mapping,
+                ens_size=ens_size,
                 **config_ds
             )
     
@@ -113,7 +115,6 @@ class Runner():
         reference = self.datasets[config["reference"]]
         config_metrics = config.get("metrics", None)
         config_save_metrics = config.get("save", None)
-
         common_vars = set(reference.data_vars)
         for ds in self.datasets.values():
             common_vars.intersection_update(set(ds.data_vars))
@@ -136,7 +137,6 @@ class Runner():
                 models = {}
                 for ds_name, ds in self.datasets.items():
                     if ds_name != config["reference"]:
-
                         models[ds_name] = metric.compute(ds[common_vars])
                 models = xr.concat(
                     models.values(),

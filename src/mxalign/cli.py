@@ -35,13 +35,18 @@ def run_slurm(args):
     from dask_jobqueue import SLURMCluster
     from .runner import Runner
     
+    log_file = open("output.log", "a", buffering=1)  # buffering=1 for line buffering
+    sys.stdout = log_file
+    sys.stderr = log_file
     cluster = SLURMCluster(
         queue = args.queue,
         account = args.account,
         cores = args.cores,
         #processes = args.processes,
+        interface = "ib0",
         memory = args.memory,
-        interface = args.interface
+        job_extra_directives = ["--qos=normal"],
+        walltime = "02:00:00",
     )
     cluster.scale(jobs=3)
     client = Client(cluster)
@@ -153,8 +158,8 @@ if __name__ == "__main__":
         format=LOG_FORMAT, 
         datefmt=DATE_FORMAT,
         handlers=[
-            #logging.FileHandler("app.log"),  # Log to a file
-            logging.StreamHandler()          # Log to console
+            logging.FileHandler("output.log"),  # Log to a file
+            # logging.StreamHandler()          # Log to console
         ]
     )
 
