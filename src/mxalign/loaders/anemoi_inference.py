@@ -46,7 +46,7 @@ class AnemoiInferenceLoader(BaseLoader):
     
     space = Space.GRID
     time=Time.FORECAST
-    uncertainty=Uncertainty.DETERMINISTIC  # Will be overridden based on data
+    uncertainty=Uncertainty.DETERMINISTIC
 
     def __init__(self, files, variables=None, grid_mapping=None, ens_size=None, **kwargs):
         super().__init__(files, variables, grid_mapping, **kwargs)
