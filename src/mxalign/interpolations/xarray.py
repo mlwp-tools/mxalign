@@ -20,7 +20,7 @@ class XarrayInterpolator(BaseInterpolator):
             if source_dataset.space.is_stacked():
                 try:
                     source_dataset = source_dataset.space.unstack()
-                except:
+                except ValueError:
                     raise ValueError(
                         "Cannot unstack dataset, dataset must be unstacked to use xarray interpolation"
                     )
