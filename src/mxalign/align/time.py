@@ -40,7 +40,7 @@ def align_time(
             if first_obs:
                 valid_times_obs = ds["valid_time"].to_dataset(name="valid_times")
                 valid_times_obs = valid_times_obs.assign_attrs(ds.attrs)
-                fist_obs = False
+                first_obs = False
             else:
                 _ds = ds["valid_time"].to_dataset(name="valid_times")
                 _ds = _ds.assign_attrs(ds.attrs)
