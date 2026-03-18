@@ -4,4 +4,4 @@
 
 
 ## Interactive use
-For interactive use please check the [introductionary notebook](./examples/introduction.ipynb)
+For interactive use please check the [introductory notebook](./examples/introduction.ipynb)

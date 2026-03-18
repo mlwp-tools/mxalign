@@ -126,7 +126,7 @@ def _build_weight_matrix(
     last = 1.0 - bary_partial.sum(axis=1, keepdims=True)
     bary = np.concatenate([bary_partial, last], axis=1)  # (n_target, ndim+1)
 
-    # Flatten into COO format for sparse matrix construction
+    # Flatten into coordinate format (COO) for sparse matrix construction
     rows = np.repeat(np.arange(n_target), ndim + 1)
     cols = simplex_vertices.ravel()
     vals = bary.ravel()

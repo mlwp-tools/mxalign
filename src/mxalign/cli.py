@@ -25,7 +25,7 @@ def run_local(args):
     try:
         runner.run()
     except:
-        LOG.error("Error during verfication closing down dask cluster", exc_info=True)
+        LOG.error("Error during verification closing down dask cluster", exc_info=True)
         client.close()
         cluster.close()
         sys.exit(1)
@@ -63,7 +63,7 @@ def run_slurm(args):
     try:
         runner.run()
     except:
-        LOG.error("Error during verfication closing down dask cluster", exc_info=True)
+        LOG.error("Error during verification closing down dask cluster", exc_info=True)
         client.close()
         cluster.close()
         sys.exit(1)

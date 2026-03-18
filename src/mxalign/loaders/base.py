@@ -91,7 +91,7 @@ class MxAlignLoader(BaseLoader):
         elif "point_index" in ds.dims:
             space = Space.POINT
         else:
-            raise ValueError("Unknow spatial dimensions")
+            raise ValueError("Unknown spatial dimensions")
 
         if "member" in ds.dims:
             uncertainty = Uncertainty.ENSEMBLE

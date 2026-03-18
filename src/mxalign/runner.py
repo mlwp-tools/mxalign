@@ -99,7 +99,7 @@ class Runner:
             elif datasets == "merge":
                 ds = xr.concat(
                     self.datasets.values(),
-                    dim=xr.Varialbe("model", list(self.datasets.keys())),
+                    dim=xr.Variable("model", list(self.datasets.keys())),
                 )
                 save_dataset(method, name, ds, **config)
             else:

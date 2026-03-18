@@ -25,7 +25,7 @@ class ObstableLoader(BaseLoader):
     def _load(self):
         if isinstance(self.files, list) and len(self.files > 1):
             raise NotImplementedError(
-                "Reading from mutliple SQLite-files not implemented"
+                "Reading from multiple SQLite-files not implemented"
             )
 
         conn = sqlite3.connect(self.files)
