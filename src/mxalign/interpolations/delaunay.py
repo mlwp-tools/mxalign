@@ -41,34 +41,30 @@ class DelaunayInterpolator(BaseInterpolator):
 
         if "latitude" in source_dataset.dims:
             lon_grid, lat_grid = np.meshgrid(
-                source_dataset["longitude"].values, 
+                source_dataset["longitude"].values,
                 source_dataset["latitude"].values
             )
-            source_points = np.column_stack((lat_grid.ravel(), lon_grid.ravel()))
-        else: 
-            source_points = np.column_stack(
-              (source_dataset["latitude"].values, source_dataset["longitude"].values)
-        )
+            src_lat = lat_grid.ravel()
+            src_lon = lon_grid.ravel()
+        else:
+            src_lat = source_dataset["latitude"].values
+            src_lon = source_dataset["longitude"].values
 
+        # Normalize longitudes to [-180, 180] so source and target are in the same range
+        src_lon = np.where(src_lon > 180, src_lon - 360, src_lon)
+        source_points = np.column_stack((src_lat, src_lon))
+
+        tgt_lon = np.where(self.target_dataset["longitude"].values > 180,
+                           self.target_dataset["longitude"].values - 360,
+                           self.target_dataset["longitude"].values)
         target_points = np.column_stack(
-            (self.target_dataset["latitude"].values, self.target_dataset["longitude"].values)
+            (self.target_dataset["latitude"].values, tgt_lon)
         )
 
-        # Remove target points outside the source grid domain.
-        # Pure convex-hull check is too permissive for projected grids (e.g. CERRA Lambert):
-        # hull-boundary triangles span large off-domain areas.  We also reject points whose
-        # containing simplex is much larger than a typical grid-cell triangle.
+        # Remove target points outside the source grid convex hull.
         triangulation = Delaunay(source_points)
         simplex_indices = triangulation.find_simplex(target_points)
-
-        pts = source_points[triangulation.simplices]          # (n_simplex, 3, 2)
-        v1 = pts[:, 1] - pts[:, 0]
-        v2 = pts[:, 2] - pts[:, 0]
-        areas = 0.5 * np.abs(v1[:, 0] * v2[:, 1] - v1[:, 1] * v2[:, 0])
-        area_threshold = np.median(areas) * 1.5
-
-        safe_idx = np.where(simplex_indices >= 0, simplex_indices, 0)
-        outside_mask = (simplex_indices == -1) | (areas[safe_idx] > area_threshold)
+        outside_mask = simplex_indices == -1
 
         if outside_mask.any():
             print(f"{outside_mask.sum()}/{len(target_points)} target points are outside the source grid and are removed.")

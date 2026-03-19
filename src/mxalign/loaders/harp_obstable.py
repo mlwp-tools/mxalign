@@ -38,12 +38,12 @@ class ObstableLoader(BaseLoader):
                 var for var in pd.read_sql_query(
                     "SELECT * FROM SYNOP LIMIT 0",
                     conn
-                ).columns if var not in COORDS.values() 
+                ).columns if var not in COORDS.values()
             ]
             print(variables)
         else:
             variables = self.variables
-        
+
         # Read the SIDs
         codes = pd.read_sql(
             f"SELECT SID as code, MIN(lat) AS latitude, MIN(lon) AS longitude, elev as altitude FROM SYNOP GROUP BY SID",
@@ -51,33 +51,40 @@ class ObstableLoader(BaseLoader):
             index_col="code"
         ).to_xarray()
 
-        print(codes)
+        # Optional date filtering (start_date / end_date as "YYYY-MM-DD" strings)
+        where_clauses = []
+        start_date = self.kwargs.get("start_date")
+        end_date   = self.kwargs.get("end_date")
+        if start_date:
+            where_clauses.append(f"validdate >= {int(pd.Timestamp(start_date).timestamp())}")
+        if end_date:
+            where_clauses.append(f"validdate < {int(pd.Timestamp(end_date).timestamp())}")
+        where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
         # Read the data
         query = f"""
                 SELECT SID as code, validdate as valid_time, {", ".join(variables)}
                 FROM SYNOP
+                {where}
             """
-        print(query)
         df = pd.read_sql(
                 query,
                 conn,
                 index_col=["code","valid_time"],
                 parse_dates={"valid_time": {"unit": "s"}}
             )
-        print(df)
-        
+
         ds = df.to_xarray()
         lon_values = codes["longitude"].sel(code=ds["code"]).values
         lat_values = codes["latitude"].sel(code=ds["code"]).values
         alt_values = codes["altitude"].sel(code=ds["code"]).values
-        
+
         ds = ds.assign_coords(
             longitude=("code", lon_values),
             latitude=("code", lat_values),
             altitude=("code", alt_values)
         )
-        
+
         return ds.rename_dims({"code":"point_index"}).transpose("valid_time","point_index")
 
 
-            
