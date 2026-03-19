@@ -63,17 +63,14 @@ class AnemoiInferenceLoader(BaseLoader):
         # has_members = any(idx is not None for idx in member_indices)
         # self._has_members = has_members
         # and all(idx is not None for idx in member_indices)
-        if self.ens_size > 1:
+        if self.ens_size is not None and self.ens_size > 1:
             # Load with member dimension
             ds = self._load_with_members(files)
-        elif self.ens_size == 1:
-
+        else:
+            if self.ens_size is None:
+                print("Warning: ens_size not set, defaulting to deterministic loading.")
             # Load without member dimension (original behavior)
             ds = self._load_deterministic(files)
-        else:
-            raise ValueError(
-                "Invalid ensemble configuration. Ensure that ens_size is set correctly and that member indices are present in filenames if ens_size > 1."
-            )
             # raise ValueError(
             #     "Cannot mix files with and without member indices. "
             #     f"Member indices found: {member_indices}"
@@ -108,48 +105,32 @@ class AnemoiInferenceLoader(BaseLoader):
     def _load_with_members(self, files):
         """Load ensemble forecast data with member dimension."""
         import xarray as xr
-        
-        kwargs = self.kwargs.copy()
-        for k, v in DEFAULTS.items():
-            kwargs[k] = self.kwargs.get(k, v)
 
-        # Load each member separately  
-        # datasets = []
-        # for filepath, member_idx in zip(files, member_indices):
-        #     ds = xr.open_dataset(filepath, engine=kwargs.get("engine", "h5netcdf"))
-        #     ds = _preprocess_with_member(ds, member_idx)
-        #     datasets.append(ds)
-        
-        # Concatenate along member dimension
-        # ds = xr.concat(datasets, dim="member")
-        
-        # Get lead times from the first member
-        times = xr.open_dataset(files[0])["time"].values
+        engine = self.kwargs.get("engine", DEFAULTS["engine"])
+
+        if len(files) % self.ens_size != 0:
+            raise ValueError(f"Number of files ({len(files)}) must be divisible by ens_size ({self.ens_size}).")
+
+        # Get lead times from the first file
+        times = xr.open_dataset(files[0], engine=engine)["time"].values
         lead_times = times - times[0]
-        if len(files) % (self.ens_size-1) != 0:
-            raise ValueError(f"Number of files ({len(files)}) must be divisible by ens_size ({self.ens_size-1}).")
-        files = [files[i:i+(self.ens_size-1)] for i in range(0, len(files), self.ens_size-1)]
 
-        ds = xr.open_mfdataset(
-            files, 
-            preprocess=_preprocess_with_member,
-            concat_dim=["member", "reference_time"],
-            combine="nested",
-            chunks={
-                    "reference_time" : "auto",
-                    "time": "auto",
-                    "values": "auto",
-                    "member": -1
-                },
-            **kwargs
-        )
-        
-        # Remove duplicate reference_times and sort to ensure unique index
-        ds = ds.drop_duplicates(dim="reference_time")
-        ds = ds.sortby("reference_time")
-        
+        # Group files by reference_time (batches of ens_size)
+        batches = [files[i:i+self.ens_size] for i in range(0, len(files), self.ens_size)]
+
+        ref_datasets = []
+        for batch in batches:
+            member_datasets = []
+            for member_idx, filepath in enumerate(batch):
+                ds = xr.open_dataset(filepath, engine=engine)
+                ds = _preprocess_with_member(ds, member_idx)
+                member_datasets.append(ds)
+            ref_datasets.append(xr.concat(member_datasets, dim="member"))
+
+        ds = xr.concat(ref_datasets, dim="reference_time")
+
         ds_out = ds.\
-            assign_coords({"lead_time": ("time", lead_times), "member": ("member", np.arange(1,self.ens_size))}).\
+            assign_coords({"lead_time": ("time", lead_times)}).\
             rename_dims({"values": "grid_index"}).\
             swap_dims({"time": "lead_time"}).\
             chunk({"member": -1})
@@ -183,8 +164,8 @@ def _preprocess_deterministic(ds):
     return ds_out
 
 
-def _preprocess_with_member(ds):
-    """Preprocess and add member dimension."""
+def _preprocess_with_member(ds, member_idx):
+    """Preprocess and add member dimension with explicit member index."""
     ds_out = ds.\
         set_coords(["longitude", "latitude"]).\
         expand_dims("reference_time").\
@@ -192,6 +173,7 @@ def _preprocess_with_member(ds):
             {"reference_time": ("reference_time", [ds["time"].values[0]])}
         ).\
         expand_dims("member").\
+        assign_coords({"member": ("member", [member_idx])}).\
         drop_vars("time")
-    
+
     return ds_out
