@@ -37,14 +37,14 @@ class DatasetPath():
         return path
     
 def save_dataset(method, name, ds, **kwargs):
-    ds = ds.drop_attrs(deep=True)
     save_fn = getattr(ds, method)
     dataset = DatasetPath(name, ds)
     path = dataset.substitute(kwargs.pop("path"))
+    print(f"Saving to {path}")
     save_fn(path, **kwargs)
 
 def save_metrics(method, ds, **kwargs):
-    ds = ds.drop_attrs(deep=True)
     save_fn = getattr(ds, method)
     path = kwargs.pop("path")
+    print(f"Saving to {path}")
     save_fn(path, **kwargs)

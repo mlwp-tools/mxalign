@@ -102,48 +102,4 @@ BUILTIN = dict(
             ny=1609
         ),
     ),
-    uwcw_cropped=dict(
-        projection="lcc",
-        kws_globe=dict(
-            semimajor_axis=6371229.0,
-            semiminor_axis=6371229.0,
-        ),
-        kws_projection=dict(
-            central_longitude=-1.96590281, 
-            central_latitude=55.5164337, 
-            standard_parallels=[55.499996, 55.499996],
-        ),
-        kws_grid=dict(
-            lat_ll=-7.98273, 
-            lon_ll=43.00599, 
-            lat_ur=13.971057,
-            lon_ur=59.993668, 
-            dx=2000.0,
-            dy=2000.0,
-            nx=747,#972
-            ny=972 #747
-        ),
-    ),
-    meps=dict(
-        projection="lcc",
-        kws_globe=dict(
-            semimajor_axis=6371229.0,
-            semiminor_axis=6371229.0,
-        ),
-        kws_projection=dict(
-            central_longitude=-1.96590281, #differ a lot
-            central_latitude=55.5164337, #differ a lot
-            standard_parallels=[55.499996, 55.499996], #differ a lot
-        ),
-        kws_grid=dict(
-            lat_ll=0.27828065,
-            lon_ll=50.31962,
-            lat_ur=54.24126,
-            lon_ur=71.57601,
-            dx=2500.0,
-            dy=2500.0,
-            nx=1069,
-            ny=949
-        ),
-    ),
 )

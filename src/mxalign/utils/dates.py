@@ -3,13 +3,12 @@ from earthkit.data.utils.patterns import Pattern
 
 
 class Dates:
-    def __init__(self, start: str | np.datetime64, end: str | np.datetime64, period: str | np.timedelta64, range: str | np.timedelta64, step: str | np.timedelta64, ens_size: int = 1):
+    def __init__(self, start: str | np.datetime64, end: str | np.datetime64, period: str | np.timedelta64, range: str | np.timedelta64, step: str | np.timedelta64):
         self._start = np.datetime64(start) if not isinstance(start, np.datetime64) else start
         self._end = np.datetime64(end) if not isinstance(end, np.datetime64) else end
         self._period = to_timedelta64(period) if isinstance(period, str) else period
         self._range = to_timedelta64(range) if isinstance(range, str) else range
         self._step = to_timedelta64(step) if isinstance(step, str) else step
-        self.ens_size = ens_size
         valid_times = set()
         lead_times = set()
         reference_times = set()
@@ -29,13 +28,9 @@ class Dates:
         self.lead_times = sorted([int(t.astype(int)) for t in lead_times])
 
     def substitute(self, path: str):
-        print(f"Substituting path: {path}")
-        print(f"Reference times: {self.reference_times}")
-        print("ensemble members: 5")
         pattern = Pattern(path)
         paths = pattern.substitute(
                 dict(reference_time=self.reference_times),
-                {"x": list(range(self.ens_size))},
                 # dict(lead_time=self.lead_times),
                 # dict(valid_time=self.valid_times),
                 allow_extra=True

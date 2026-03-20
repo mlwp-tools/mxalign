@@ -32,8 +32,6 @@ class Metric():
         if self._dim is None:
             return ds
         dim = [self._dim] if isinstance(self._dim, str) else self._dim
-        if 'member' in ds.dims:
-            dim.append('member') 
         dim_other = [d for d in ds.dims if d not in dim]
         chunks = {d: -1 for d in dim}
         for d in dim_other:

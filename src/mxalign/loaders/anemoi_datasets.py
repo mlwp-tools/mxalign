@@ -39,15 +39,7 @@ class AnemoiDatasetsLoader(BaseLoader):
     space=Space.GRID
     time=Time.OBSERVATION
     uncertainty=Uncertainty.DETERMINISTIC
-    def __init__(self, files, variables=None, grid_mapping=None, area=None, **kwargs):
-        super().__init__(files, variables, grid_mapping, **kwargs)
-        if area:
-            self.area = area
-        else:
-            self.area = None
-        # Detect uncertainty based on member presence
-        # self._has_members = None  # Will be determined in _load()
-
+    
     def _load(self):
 
         if isinstance(self.files, list):
@@ -67,23 +59,6 @@ class AnemoiDatasetsLoader(BaseLoader):
             ds_selected = ds_postproc
             if len(ds_selected["variable"]) > 10:
                 print(f"Transforming anemoi-datasets xr.DataArray with {len(ds_postproc['variable'])} variables to xr.Dataset, this might take some time. Consider selecting the relevant variables during loading")
-        
-        if self.area:
-            lats = ds_selected.latitude.values
-            lons = ds_selected.longitude.values
-            north, west, south, east = self.area
-            mask = (
-                (lats > south)
-                & (lats < north)
-                & (
-                    ((lons > west) & (lons < east))
-                    | ((lons > west + 360) & (lons < east + 360))
-                    | ((lons > west - 360) & (lons < east - 360))
-                )
-            )
-            inds = np.array(range(len(lats)))[mask]
-            ds_selected = ds_selected.isel(grid_index = inds)
-    
         return ds_selected.to_dataset(dim="variable")
 
 def _postprocess(dataset : xr.Dataset) -> xr.Dataset:

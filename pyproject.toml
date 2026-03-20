@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Michiel Van Ginderachter", email = "michiel.vanginderachter@meteo.be" }
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "cartopy>=0.25.0",
     "dask>=2026.1.2",
