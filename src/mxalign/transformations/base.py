@@ -26,9 +26,27 @@ def transform(ds, variables , inverse=False):
 
     return(ds)
 
+@register_transformation("pa_to_hpa")
+def transform(ds, variables, inverse=False):
+    if isinstance(variables, str):
+        variables = [variables]
+    factor = 100.0 if inverse else 0.01
+    for var in variables:
+        ds[var] = ds[var] * factor
+    return ds
+
 @ register_transformation("uv_to_speed")
 def transform(ds, u, v, speed):
     import numpy as np
     result = np.sqrt(ds[u]**2 + ds[v]**2)
     ds[speed] = result
+    return ds
+
+@register_transformation("scale")
+def transform(ds, variables, factor):
+    if isinstance(variables, str):
+        variables = [variables]
+    for var in variables:
+        if var in ds:
+            ds[var] = ds[var] * factor
     return ds

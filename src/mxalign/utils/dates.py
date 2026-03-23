@@ -31,7 +31,7 @@ class Dates:
     def substitute(self, path: str):
         print(f"Substituting path: {path}")
         print(f"Reference times: {self.reference_times}")
-        print("ensemble members: 5")
+        print(f"ensemble members: {self.ens_size}") 
         pattern = Pattern(path)
         paths = pattern.substitute(
                 dict(reference_time=self.reference_times),

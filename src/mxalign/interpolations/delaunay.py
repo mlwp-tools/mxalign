@@ -85,10 +85,12 @@ class DelaunayInterpolator(BaseInterpolator):
             dist_km = 2 * 6371.0 * np.arcsin(np.sqrt(a))
             far_mask = dist_km > max_distance
             if far_mask.any():
-                print(f"{far_mask.sum()}/{len(target_points)} target points are farther than {max_distance} km from the nearest source point and are removed.")
+                print(f"Extra check with max_distance: {far_mask.sum()}/{len(target_points)} target points are farther than {max_distance} km from the nearest source point and are removed.")
                 close_mask = ~far_mask
                 self.target_dataset = self.target_dataset.isel(point_index=close_mask)
                 target_points = target_points[close_mask]
+
+        print(f"{len(target_points)}/{len(outside_mask)} target points are kept.")
 
         # Compute triangulation and sparse weight matrix ONCE, shared across all variables
         W = self._get_weights(source_points, target_points)

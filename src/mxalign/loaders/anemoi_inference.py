@@ -8,7 +8,9 @@ import xarray as xr
     # "chunks": "auto",
 DEFAULTS={
     "engine": "h5netcdf",
-    "parallel": True
+    "parallel": True,
+    "combine": "nested",
+    "concat_dim": "reference_time",
 }
 
 # def _extract_member_index(filename):
@@ -98,7 +100,8 @@ class AnemoiInferenceLoader(BaseLoader):
         ds_out = ds.\
             assign_coords({"lead_time": ("time", lead_times)}).\
             rename_dims({"values": "grid_index"}).\
-            swap_dims({"time": "lead_time"})
+            swap_dims({"time": "lead_time"}).\
+            chunk({"grid_index": -1})
 
         return ds_out
 
@@ -133,7 +136,7 @@ class AnemoiInferenceLoader(BaseLoader):
             assign_coords({"lead_time": ("time", lead_times)}).\
             rename_dims({"values": "grid_index"}).\
             swap_dims({"time": "lead_time"}).\
-            chunk({"member": -1})
+            chunk({"member": -1, "grid_index": -1})
 
         return ds_out
 

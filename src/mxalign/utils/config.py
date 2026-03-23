@@ -42,5 +42,6 @@ class Config():
             
             if dates:
                 dates = Dates(**dates, ens_size=ens_size if ens_size else 1)
-                loader["files"] = dates.substitute(loader["files"])
+                if isinstance(loader["files"], str):
+                    loader["files"] = dates.substitute(loader["files"])
             self.config["datasets"][key]=loader

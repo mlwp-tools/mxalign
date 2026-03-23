@@ -23,7 +23,7 @@ class ZarrUWCWForecastsLoader(BaseLoader):
             ds = self._load_single_zarr(files[0])
         else:
             dss = [self._load_single_zarr(f) for f in files]
-            ds = xr.concat(dss, dim="reference_time")
+            ds = xr.merge(dss)
 
         # Filter to requested reference_times if provided by config dates section.
         # Without this, the full multi-year zarr is kept in the dask graph, causing OOM.
@@ -39,6 +39,7 @@ class ZarrUWCWForecastsLoader(BaseLoader):
         # and lead_time[0] (0-hour lead) would otherwise be silently masked to NaT.
         # CF datetime decoding (decode_cf=True, default) still runs normally.
         ds = xr.open_zarr(zarr_path, chunks="auto", consolidated=False, mask_and_scale=False)
+        ds = ds.chunk({"grid_index": -1})
 
         # xr.open_zarr CF-decodes reference_time as datetime64[s] (newer xarray default).
         # Cast to datetime64[ns] to match the observation datasets and avoid sel() mismatches.
