@@ -1,7 +1,9 @@
 import os
+import numpy as np
 import xarray as xr
 
 from .utils.config import Config
+from .utils.dates import Dates
 from .loaders.loader import load
 from .transformations.transform import transform
 from .align.time import align_time
@@ -30,6 +32,10 @@ class Runner():
         config = self.config["datasets"]
         if config is None:
             return ValueError("No datasets section in the config.")
+
+        dates_config = self.config.dates
+        dates = Dates(**dates_config) if dates_config else None
+
         for name, config_ds in config.items():
             config_ds = config_ds.copy()
             # Check if all the files exist
@@ -42,9 +48,9 @@ class Runner():
             for file in config_ds.pop("files"):
                 if os.path.exists(file):
                     files.append(file)
-                else: 
+                else:
                     print(f"File: {file} is missing, skipping.")
-            self.datasets[name] = load(
+            ds = load(
                 name=loader,
                 files=files,
                 variables=variables,
@@ -52,6 +58,9 @@ class Runner():
                 ens_size=ens_size,
                 **config_ds
             )
+            if dates is not None:
+                ds = _filter_by_dates(ds, dates)
+            self.datasets[name] = ds
     
     def transform_datasets(self):
         config = self.config["transformations"]
@@ -77,11 +86,21 @@ class Runner():
         config_align_space = config.get("space", None)
         config_align_save = config.get("save", None)
 
+        def _debug_reftimes(label):
+            for name, ds in self.datasets.items():
+                if "reference_time" in ds.dims:
+                    hours = set(ds["reference_time"].dt.hour.values.tolist())
+                    print(f"  [{label}] {name}: {ds.sizes['reference_time']} ref_times, hours={sorted(hours)}")
+
+        _debug_reftimes("after load")
+
         # align in time
         if config_align_time:
             self.align_time(config_align_time)
         else:
             print("Skipping temporal alignment")
+
+        _debug_reftimes("after time align")
 
         # align in space
         if config_align_space:
@@ -89,9 +108,13 @@ class Runner():
         else:
             print("Skipping spatial alignment")
 
+        _debug_reftimes("after space align")
+
         # broadcast NaNs
         if brdcst_nans:
             self.datasets = broadcast_nans(self.datasets)
+
+        _debug_reftimes("after broadcast_nans")
 
         # Save aligned datasets
         if config_align_save:
@@ -175,5 +198,24 @@ def get_spatial_alignment(ds, reference):
     if reference.space.is_grid() and ds.space.is_grid():
         return "regrid"
     return "null"
+
+
+def _filter_by_dates(ds, dates):
+    """Slice a dataset to keep only the times defined by a Dates object."""
+    if "reference_time" in ds.dims:
+        ref_times = np.array(sorted(dates.reference_times), dtype="datetime64[ns]")
+        ref_times = ref_times[np.isin(ref_times, ds["reference_time"].values)]
+        ds = ds.sel(reference_time=ref_times)
+        if "lead_time" in ds.dims:
+            lead_times = np.array(
+                [np.timedelta64(lt, "s") for lt in dates.lead_times], dtype="timedelta64[ns]"
+            )
+            lead_times = lead_times[np.isin(lead_times, ds["lead_time"].values)]
+            ds = ds.sel(lead_time=lead_times)
+    elif "valid_time" in ds.dims:
+        valid_times = np.array(sorted(dates.valid_times), dtype="datetime64[ns]")
+        valid_times = valid_times[np.isin(valid_times, ds["valid_time"].values)]
+        ds = ds.sel(valid_time=valid_times)
+    return ds
 
             
