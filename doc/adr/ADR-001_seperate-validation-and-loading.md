@@ -1,6 +1,6 @@
 ---
 # These are optional metadata elements. Feel free to remove any of them.
-status: proposed
+status: accepted
 date: 2026-03-25
 decision-makers: Denby L. Van Ginderachter M.
 informed: Francois B., Buurman S.
