@@ -37,6 +37,8 @@ class Runner():
             variables = config_ds.pop("variables", None)
             grid_mapping = config_ds.pop("grid_mapping", None)
             ens_size = config_ds.pop("ens_size", 1)
+            print(f"Initializing dataset {name} with loader config: {config_ds}")
+            print(f"Ens size: {ens_size}")
             files = []
             # Check if all the files exist
             for file in config_ds.pop("files"):
@@ -52,6 +54,7 @@ class Runner():
                 ens_size=ens_size,
                 **config_ds
             )
+            print(f"Dataset {name} loaded: {self.datasets[name]}")
     
     def transform_datasets(self):
         config = self.config["transformations"]
@@ -79,7 +82,7 @@ class Runner():
 
         # align in time
         if config_align_time:
-            self.align_time(config_align_time)
+            self.align_time(reference = reference, config=config_align_time)
         else:
             print("Skipping temporal alignment")
 
@@ -119,10 +122,13 @@ class Runner():
         for ds in self.datasets.values():
             common_vars.intersection_update(set(ds.data_vars))
         common_vars = list(common_vars)
-
+        print(f"Common variables for verification: {common_vars}")
+        print(f"Reference dataset for verification: {reference}")
+        print(f"Datasets to verify: {self.datasets}")
         if config_metrics:
             metrics = {}
             for metric_name, config_metric in config["metrics"].items():
+                print(f"Computing metric: {metric_name} with config: {config_metric}")
                 config_metric = config_metric.copy()
                 func_path = config_metric.pop("function")
                 inputs = config_metric.pop("inputs")
@@ -134,6 +140,7 @@ class Runner():
                     inputs=inputs,
                     **config_metric
                 )
+                print(f"Initialized metric: {metric}")
                 models = {}
                 for ds_name, ds in self.datasets.items():
                     if ds_name != config["reference"]:
@@ -156,8 +163,8 @@ class Runner():
 
 
     
-    def align_time(self, config):
-        self.datasets = align_time(self.datasets, **config)
+    def align_time(self, reference, config):
+        self.datasets = align_time(reference, self.datasets, **config)
 
     def align_space(self, reference, config):
         ds_ref = self.datasets[reference]

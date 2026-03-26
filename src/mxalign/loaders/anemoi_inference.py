@@ -48,9 +48,13 @@ class AnemoiInferenceLoader(BaseLoader):
     time=Time.FORECAST
     uncertainty=Uncertainty.DETERMINISTIC
 
-    def __init__(self, files, variables=None, grid_mapping=None, ens_size=None, **kwargs):
+    def __init__(self, files, variables=None, grid_mapping=None, ens_size=None, start_from=0,**kwargs):
         super().__init__(files, variables, grid_mapping, **kwargs)
         self.ens_size = ens_size
+        print(f"Initialized AnemoiInferenceLoader with ens_size: {self.ens_size}")
+        print("base ens size:", ens_size)
+        print("start from:", start_from)
+        self.start_from = start_from
         # Detect uncertainty based on member presence
         # self._has_members = None  # Will be determined in _load()
 
@@ -126,14 +130,15 @@ class AnemoiInferenceLoader(BaseLoader):
         # Get lead times from the first member
         times = xr.open_dataset(files[0])["time"].values
         lead_times = times - times[0]
-        if len(files) % (self.ens_size-1) != 0:
-            raise ValueError(f"Number of files ({len(files)}) must be divisible by ens_size ({self.ens_size-1}).")
-        files = [files[i:i+(self.ens_size-1)] for i in range(0, len(files), self.ens_size-1)]
-
+        if len(files) % (self.ens_size) != 0:
+            raise ValueError(f"Number of files ({len(files)}) must be divisible by ens_size ({self.ens_size}).")
+        files = [files[i:i+(self.ens_size)] for i in range(0, len(files), self.ens_size)]
+        print(f"Loading {len(files)} files with {self.ens_size} ensemble members each.")
+        print(f"Files: {files}")
         ds = xr.open_mfdataset(
             files, 
             preprocess=_preprocess_with_member,
-            concat_dim=["member", "reference_time"],
+            concat_dim=["reference_time", "member"],
             combine="nested",
             chunks={
                     "reference_time" : "auto",
@@ -147,27 +152,27 @@ class AnemoiInferenceLoader(BaseLoader):
         # Remove duplicate reference_times and sort to ensure unique index
         ds = ds.drop_duplicates(dim="reference_time")
         ds = ds.sortby("reference_time")
-        
+        print("dataset", ds)
         ds_out = ds.\
-            assign_coords({"lead_time": ("time", lead_times), "member": ("member", np.arange(1,self.ens_size))}).\
+            assign_coords({"lead_time": ("time", lead_times), "member": ("member", np.arange(self.start_from,self.ens_size+self.start_from))}).\
             rename_dims({"values": "grid_index"}).\
             swap_dims({"time": "lead_time"}).\
-            chunk({"member": -1})
+            chunk({"member": -1, "lead_time": "auto", "grid_index": "auto", "reference_time": "auto"})
 
         return ds_out
 
-    # def _get_properties(self, ds):
-    #     """Override to set uncertainty based on member presence."""
-    #     from ..properties.properties import Properties
+    def _get_properties(self, ds):
+        """Override to set uncertainty based on member presence."""
+        from ..properties.properties import Properties
         
-    #     # Determine uncertainty based on whether members were detected
-    #     uncertainty = Uncertainty.ENSEMBLE if self._has_members else Uncertainty.DETERMINISTIC
+        # Determine uncertainty based on whether members were detected
+        uncertainty = Uncertainty.ENSEMBLE if "member" in ds.dims else Uncertainty.DETERMINISTIC
         
-    #     return Properties(
-    #         space=self.space,
-    #         time=self.time,
-    #         uncertainty=uncertainty
-    #     )
+        return Properties(
+            space=self.space,
+            time=self.time,
+            uncertainty=uncertainty
+        )
 
 
 def _preprocess_deterministic(ds):

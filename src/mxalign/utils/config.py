@@ -28,6 +28,9 @@ class Config():
         for key, loader in self.config["datasets"].items():
             dates_loader = loader.pop("dates", None)
             ens_size = loader.get("ens_size", None)
+            start_from = loader.get("start_from", 0)
+            print(f"Initializing dataset {key} with loader config: {loader}")
+            print("ens size:", ens_size)
             if self.dates:
                 if dates_loader:
                     keys_all = list(set(self.dates.keys()).union(dates_loader.keys()))
@@ -41,6 +44,6 @@ class Config():
                     dates = None
             
             if dates:
-                dates = Dates(**dates, ens_size=ens_size if ens_size else 1)
+                dates = Dates(**dates, ens_size=ens_size if ens_size else 1, start_from=start_from if start_from else 0)
                 loader["files"] = dates.substitute(loader["files"])
             self.config["datasets"][key]=loader

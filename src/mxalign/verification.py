@@ -22,9 +22,12 @@ class Metric():
         self._kwarg_ds = kwarg_ds[0]
 
     def compute(self, ds):
-        if self._is_xskillscore:
-            ds = self._rechunk(ds)
+        print("is xskillscore metric?", self._is_xskillscore)
+        # if self._is_xskillscore:
+        ds = self._rechunk(ds)
         kwarg_ds = {self._kwarg_ds: ds}
+        print(f"Computing metric {self.name} with dataset: {ds}")
+        print("kwargs for metric computation:", kwarg_ds)
         return self._func(**kwarg_ds)
 
     
@@ -32,8 +35,6 @@ class Metric():
         if self._dim is None:
             return ds
         dim = [self._dim] if isinstance(self._dim, str) else self._dim
-        if 'member' in ds.dims:
-            dim.append('member') 
         dim_other = [d for d in ds.dims if d not in dim]
         chunks = {d: -1 for d in dim}
         for d in dim_other:
@@ -47,6 +48,8 @@ def verify(fcst, obs, func_path, inputs, **kwargs):
         "forecast": fcst,
         "observation": obs,
     }
+    print('forecast ', fcst)
+    print('observation ', obs)
     input_kwargs = {
         arg_name: datasets[ds_type]
         for arg_name, ds_type in inputs.items() 
