@@ -120,6 +120,10 @@ def _align_observation_forecast(ds_observation, ds_forecast, only_common=False):
         #max_reference_time = ds_observation.valid_time.max().values - (ds_forecast_cut.lead_time.max().values - shift)
         ds_forecast_cut = ds_forecast_cut.sel(reference_time=slice(None, max_reference_time))
 
+    # Reindex obs to cover all forecast valid_times (NaN for missing obs),
+    # then do the 2D sel — avoids KeyError when obs has gaps.
+    flat_valid_times = np.unique(ds_forecast_cut.valid_time.values.ravel())
+    ds_observation = ds_observation.reindex(valid_time=flat_valid_times)
     ds_observation_aligned = ds_observation.sel(valid_time=ds_forecast_cut.valid_time)
     ds_observation_aligned = ds_observation_aligned.transpose("reference_time", "lead_time", ...)
     ds_observation_aligned = update_time_property(ds_observation_aligned, Time.FORECAST)
