@@ -202,6 +202,79 @@ def qq_plot_data(observations, forecasts, quantiles_min, quantiles_max, quantile
     return xr.merge([obs_q, fct_q])
 
 
+def spread_skill(observations, forecasts, dim, member_dim="member", skipna=True, valid_range=None):
+    """Ensemble spread and RMSE of the ensemble mean vs observations.
+
+    Both curves are averaged over ``dim`` (typically ``reference_time`` and the
+    spatial dimension), leaving ``lead_time`` on the x-axis.  A well-calibrated
+    ensemble satisfies spread ≈ RMSE.
+
+    Parameters
+    ----------
+    observations : xr.Dataset
+        Reference dataset, dims (..., lead_time, point_index/grid_index).
+    forecasts : xr.Dataset
+        Ensemble forecast, dims (..., member, lead_time, point_index/grid_index).
+    dim : str or list of str
+        Dimensions to average over (e.g. ["point_index", "reference_time"]).
+    member_dim : str
+        Name of the ensemble member dimension (default: "member").
+    skipna : bool
+        Whether to skip NaNs.
+    valid_range : dict, optional
+        Per-variable physical bounds, e.g. {"2t": [150, 360]}.
+
+    Returns
+    -------
+    xr.Dataset
+        For each variable a DataArray with a ``curve`` dimension
+        (values: ``["spread", "rmse"]``) and remaining dims (typically
+        ``lead_time``).
+    """
+    dim_list = [dim] if isinstance(dim, str) else list(dim)
+
+    # Mirror the chunking strategy used by _rechunk() for xskillscore metrics:
+    # reduction dims and member get chunk=-1, all other dims (e.g. lead_time)
+    # get chunk=1 so that each dask task covers only one lead_time slice.
+    # This matches how CRPS is processed and keeps peak memory bounded.
+    obs_chunk = {d: -1 for d in dim_list}
+    for d in observations.dims:
+        if d not in obs_chunk:
+            obs_chunk[d] = 1
+    observations = observations.chunk(obs_chunk)
+
+    fct_chunk = {d: -1 for d in dim_list + [member_dim]}
+    for d in forecasts.dims:
+        if d not in fct_chunk:
+            fct_chunk[d] = 1
+    forecasts = forecasts.chunk(fct_chunk)
+
+    per_var = {}
+    for var in list(observations.data_vars):
+        obs_v = observations[var]
+        fct_v = forecasts[var]
+
+        # Mask unphysical fill values (e.g. 9.96921e+36 from zarr/netCDF)
+        obs_v = obs_v.where(np.abs(obs_v) < 1e10)
+        fct_v = fct_v.where(np.abs(fct_v) < 1e10)
+
+        if valid_range and var in valid_range:
+            vmin, vmax = valid_range[var]
+            obs_v = obs_v.where((obs_v >= vmin) & (obs_v <= vmax))
+            fct_v = fct_v.where((fct_v >= vmin) & (fct_v <= vmax))
+
+        ens_mean = fct_v.mean(dim=member_dim, skipna=skipna)
+        spread = fct_v.std(dim=member_dim, skipna=skipna).mean(dim=dim_list, skipna=skipna)
+        rmse = np.sqrt(((ens_mean - obs_v) ** 2).mean(dim=dim_list, skipna=skipna))
+
+        per_var[var] = xr.concat(
+            [spread, rmse],
+            dim=xr.Variable("curve", ["spread", "rmse"])
+        ).compute()
+
+    return xr.Dataset(per_var)
+
+
 def power_spectrum(observations, forecasts, dim_x, dim_y, res,
                    variables=None, ref_time_chunk=50):
     """2D power spectrum averaged over reference_time, one curve per lead_time.

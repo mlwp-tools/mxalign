@@ -136,7 +136,7 @@ class AnemoiInferenceLoader(BaseLoader):
             assign_coords({"lead_time": ("time", lead_times)}).\
             rename_dims({"values": "grid_index"}).\
             swap_dims({"time": "lead_time"}).\
-            chunk({"member": -1, "grid_index": -1})
+            chunk({"member": -1, "grid_index": -1, "lead_time": 1})
 
         return ds_out
 
