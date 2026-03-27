@@ -50,3 +50,28 @@ def transform(ds, variables, factor):
         if var in ds:
             ds[var] = ds[var] * factor
     return ds
+
+@register_transformation("valid_range")
+def transform(ds, variables, min=None, max=None, datasets=None):
+    """Mask values outside [min, max] with NaN.
+
+    Applied *before* spatial/temporal alignment so that fill values and bad
+    sensor readings propagate as NaN rather than inflating error metrics.
+    This is distinct from the valid_range check inside mse_by_domain, which
+    acts as a safety net on the forecast side after alignment.
+
+    Typical use case: SYNOP AccPcp6h can carry fill values (e.g. 62622 mm)
+    that pass the station QC but are physically impossible. Setting max=800
+    discards them before they corrupt the MSE average.
+    """
+    if isinstance(variables, str):
+        variables = [variables]
+    for var in variables:
+        if var in ds:
+            mask = True
+            if min is not None:
+                mask = mask & (ds[var] >= min)
+            if max is not None:
+                mask = mask & (ds[var] <= max)
+            ds[var] = ds[var].where(mask)
+    return ds
