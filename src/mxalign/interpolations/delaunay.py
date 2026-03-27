@@ -58,7 +58,7 @@ class DelaunayInterpolator(BaseInterpolator):
                            self.target_dataset["longitude"].values - 360,
                            self.target_dataset["longitude"].values)
         target_points = np.column_stack(
-            (self.target_dataset["latitude"].values, tgt_lon)
+            (np.atleast_1d(self.target_dataset["latitude"].values), np.atleast_1d(tgt_lon))
         )
 
         # Remove target points outside the source grid convex hull.
