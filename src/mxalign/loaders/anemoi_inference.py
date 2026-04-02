@@ -52,7 +52,7 @@ class AnemoiInferenceLoader(BaseLoader):
                 for k, v in DEFAULTS_ZARR.items():
                     kwargs[k] = self.kwargs.get(k,v)
                 kwargs["engine"] = "zarr"
-                
+
             else: 
                 for k, v in DEFAULTS_NETCDF.items():
                     kwargs[k] = self.kwargs.get(k,v)
@@ -82,13 +82,13 @@ def _open_mf_dataset(files, **kwargs):
     return ds_out
 
 def _open_zarr(files, **kwargs):
-    ds_out = _preprocess(
-        xr.open_zarr(files, **kwargs)
-    )
-    
-    times = ds_out["time"].values
-    lead_times = times - times[0]    
 
+    ds = xr.open_zarr(files, **kwargs)
+    times = ds["time"].values
+    lead_times = times - times[0] 
+    
+    ds_out = _preprocess(ds)
+        
     ds_out = ds_out.\
         assign_coords({"lead_time": ("time", lead_times)}).\
         rename_dims({"values": "grid_index"}).\
