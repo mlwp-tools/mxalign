@@ -19,7 +19,7 @@ repos:
       args: [--ignore-words-list=COO, --ignore-regex=^\s*"image\/png":\s.*]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.6
+    rev: v0.15.8
     hooks:
       - id: ruff-check
         args: [--fix]
