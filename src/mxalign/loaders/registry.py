@@ -1,5 +1,6 @@
 _LOADERS = {}
 
+
 def register_loader(cls):
     _LOADERS[cls.name] = cls
     return cls

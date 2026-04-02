@@ -1,7 +1,7 @@
-
 from dataclasses import dataclass, field
 from typing import Callable
 from .properties import Space, Time, Uncertainty
+
 
 @dataclass
 class PropertySpec:
@@ -10,6 +10,7 @@ class PropertySpec:
     optional_dims: set[str] = field(default_factory=set)
     optional_coords: set[str] = field(default_factory=set)
     validators: list[Callable] = field(default_factory=list)
+
 
 SPACE_SPECS = {
     Space.GRID: PropertySpec(
@@ -27,7 +28,7 @@ SPACE_SPECS = {
             {"point_index"},
         ],
         required_coords={"longitude", "latitude"},
-        optional_coords={"code","elevation", "name", "country"}
+        optional_coords={"code", "elevation", "name", "country"},
     ),
 }
 TIME_SPECS = {
@@ -45,11 +46,9 @@ TIME_SPECS = {
 UNCERTAINTY_SPECS = {
     Uncertainty.DETERMINISTIC: PropertySpec(),
     Uncertainty.ENSEMBLE: PropertySpec(
-        dim_variants=[{"member"}],
-        required_coords={"member"}
+        dim_variants=[{"member"}], required_coords={"member"}
     ),
     Uncertainty.QUANTILE: PropertySpec(
-        dim_variants=[{"quantile"}],
-        required_coords={"quantile"}
-    )
+        dim_variants=[{"quantile"}], required_coords={"quantile"}
+    ),
 }

@@ -3,8 +3,17 @@ from earthkit.data.utils.patterns import Pattern
 
 
 class Dates:
-    def __init__(self, start: str | np.datetime64, end: str | np.datetime64, period: str | np.timedelta64, range: str | np.timedelta64, step: str | np.timedelta64):
-        self._start = np.datetime64(start) if not isinstance(start, np.datetime64) else start
+    def __init__(
+        self,
+        start: str | np.datetime64,
+        end: str | np.datetime64,
+        period: str | np.timedelta64,
+        range: str | np.timedelta64,
+        step: str | np.timedelta64,
+    ):
+        self._start = (
+            np.datetime64(start) if not isinstance(start, np.datetime64) else start
+        )
         self._end = np.datetime64(end) if not isinstance(end, np.datetime64) else end
         self._period = to_timedelta64(period) if isinstance(period, str) else period
         self._range = to_timedelta64(range) if isinstance(range, str) else range
@@ -14,9 +23,9 @@ class Dates:
         reference_times = set()
         date = self._start
         while date <= self._end:
-            #print(date)
+            # print(date)
             reference_times.add(date)
-            delta = np.timedelta64(0,"s")
+            delta = np.timedelta64(0, "s")
             while delta <= self._range:
                 valid_times.add(date + delta)
                 lead_times.add(delta)
@@ -30,14 +39,14 @@ class Dates:
     def substitute(self, path: str):
         pattern = Pattern(path)
         paths = pattern.substitute(
-                dict(reference_time=self.reference_times),
-                # dict(lead_time=self.lead_times),
-                # dict(valid_time=self.valid_times),
-                allow_extra=True
-            )
+            dict(reference_time=self.reference_times),
+            # dict(lead_time=self.lead_times),
+            # dict(valid_time=self.valid_times),
+            allow_extra=True,
+        )
         return sorted(paths)
-       
-        
+
+
 def to_timedelta64(freq: str) -> np.timedelta64:
     """
     Convert a frequency string to a numpy timedelta64 object.
@@ -56,7 +65,7 @@ def to_timedelta64(freq: str) -> np.timedelta64:
     ----------
     freq : str
         The frequency string to convert.
-    
+
     Returns
     -------
     np.timedelta64
@@ -64,4 +73,4 @@ def to_timedelta64(freq: str) -> np.timedelta64:
     """
     value = freq[:-1]
     unit = freq[-1]
-    return np.timedelta64(value,unit)
+    return np.timedelta64(value, unit)

@@ -11,16 +11,15 @@ from .utils.save import save_dataset, save_metrics
 from .verification import Metric
 
 
-
-class Runner():
+class Runner:
     def __init__(self, config: str | dict):
         self.config = Config(config)
         self.datasets = {}
-    
+
     def run(self):
         # 1. Load the datasets
         self.load_datasets()
-        
+
         # 2. Transform the datasets
         self.transform_datasets()
         self.align()
@@ -41,16 +40,16 @@ class Runner():
             for file in config_ds.pop("files"):
                 if os.path.exists(file):
                     files.append(file)
-                else: 
+                else:
                     print(f"File: {file} is missing, skipping.")
             self.datasets[name] = load(
                 name=loader,
                 files=files,
                 variables=variables,
                 grid_mapping=grid_mapping,
-                **config_ds
+                **config_ds,
             )
-    
+
     def transform_datasets(self):
         config = self.config["transformations"]
         if config is None:
@@ -62,16 +61,14 @@ class Runner():
             for name in names_ds:
                 ds = self.datasets[name]
                 self.datasets[name] = transform(
-                    name=transformation,
-                    datasets=ds,
-                    **config_trans
+                    name=transformation, datasets=ds, **config_trans
                 )
 
     def align(self):
         config = self.config["alignment"]
         reference = config.pop("reference")
         brdcst_nans = config.pop("broadcast_nans", True)
-        config_align_time = config.get("time",None)
+        config_align_time = config.get("time", None)
         config_align_space = config.get("space", None)
         config_align_save = config.get("save", None)
 
@@ -95,19 +92,19 @@ class Runner():
         if config_align_save:
             config = config_align_save.copy()
             method = config.pop("method")
-            datasets = config.pop("datasets","all")
+            datasets = config.pop("datasets", "all")
             if datasets == "all":
                 for name, ds in self.datasets.items():
                     save_dataset(method, name, ds, **config)
             elif datasets == "merge":
                 ds = xr.concat(
                     self.datasets.values(),
-                    dim = xr.Varialbe("model", list(self.datasets.keys()))
+                    dim=xr.Variable("model", list(self.datasets.keys())),
                 )
                 save_dataset(method, name, ds, **config)
             else:
                 raise ValueError("Unknown option for dataset saving.")
-    
+
     def verify(self):
         config = self.config["verification"]
         reference = self.datasets[config["reference"]]
@@ -125,37 +122,32 @@ class Runner():
                 config_metric = config_metric.copy()
                 func_path = config_metric.pop("function")
                 inputs = config_metric.pop("inputs")
-                
+
                 metric = Metric(
                     name=metric_name,
                     func_path=func_path,
                     ds_ref=reference[common_vars],
                     inputs=inputs,
-                    **config_metric
+                    **config_metric,
                 )
                 models = {}
                 for ds_name, ds in self.datasets.items():
                     if ds_name != config["reference"]:
-
                         models[ds_name] = metric.compute(ds[common_vars])
                 models = xr.concat(
-                    models.values(),
-                    dim = xr.Variable("model", list(models.keys()))
+                    models.values(), dim=xr.Variable("model", list(models.keys()))
                 )
                 metrics[metric.name] = models
             metrics = xr.concat(
-                metrics.values(),
-                dim = xr.Variable("metric", list(metrics.keys()))
+                metrics.values(), dim=xr.Variable("metric", list(metrics.keys()))
             )
             self.metrics = metrics.transpose("model", "metric", ...).compute()
-        
+
         if config_save_metrics:
             config = config_save_metrics.copy()
             method = config.pop("method")
             save_metrics(method, self.metrics, **config)
 
-
-    
     def align_time(self, config):
         self.datasets = align_time(self.datasets, **config)
 
@@ -165,8 +157,7 @@ class Runner():
             if name != reference:
                 options = config.get(get_spatial_alignment(ds, ds_ref), {})
                 self.datasets[name] = align_space(ds, ds_ref, **options)
-        
-    
+
 
 def get_spatial_alignment(ds, reference):
     if reference.space.is_point() and ds.space.is_grid():
@@ -174,5 +165,3 @@ def get_spatial_alignment(ds, reference):
     if reference.space.is_grid() and ds.space.is_grid():
         return "regrid"
     return "null"
-
-            

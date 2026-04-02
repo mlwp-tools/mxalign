@@ -1,18 +1,20 @@
 from .registry import register_transformation
 
+
 @register_transformation("rename")
-def transform(ds, rename_dict):
+def transform_rename(ds, rename_dict):
     new_dict = {}
     for new_name, old_names in rename_dict.items():
         for name in ds.keys():
             if name in old_names:
-                new_dict[name]= new_name
+                new_dict[name] = new_name
             else:
                 pass
     return ds.rename(new_dict)
 
+
 @register_transformation("kelvin_to_celcius")
-def transform(ds, variables , inverse=False):
+def transform_kelvin_to_celcius(ds, variables, inverse=False):
     T_C2K = 273.15
     if isinstance(variables, str):
         variables = [variables]
@@ -24,11 +26,13 @@ def transform(ds, variables , inverse=False):
     for var in variables:
         ds[var] = ds[var] + t
 
-    return(ds)
+    return ds
 
-@ register_transformation("uv_to_speed")
+
+@register_transformation("uv_to_speed")
 def transform(ds, u, v, speed):
     import numpy as np
-    result = np.sqrt(ds[u]**2 + ds[v]**2)
+
+    result = np.sqrt(ds[u] ** 2 + ds[v] ** 2)
     ds[speed] = result
     return ds

@@ -65,10 +65,3 @@ verification:
   save:
     method: to_netcdf
     path: "myfile.nc"
-
-
-
-
-
-    
-    

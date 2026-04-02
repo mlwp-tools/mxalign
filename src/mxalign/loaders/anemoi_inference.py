@@ -18,12 +18,11 @@ DEFAULTS_ZARR = {
 
 @register_loader
 class AnemoiInferenceLoader(BaseLoader):
-
     name = "anemoi-inference"
-    
+
     space = Space.GRID
-    time=Time.FORECAST
-    uncertainty=Uncertainty.DETERMINISTIC
+    time = Time.FORECAST
+    uncertainty = Uncertainty.DETERMINISTIC
 
     def _load(self):
 
@@ -97,13 +96,13 @@ def _open_zarr(files, **kwargs):
     return ds_out 
 
 
+
 def _preprocess(ds):
-    ds_out = ds.\
-        set_coords(["longitude", "latitude"]).\
-        expand_dims("reference_time").\
-        assign_coords(
-            {"reference_time": ("reference_time", [ds["time"].values[0]])}
-        ).\
-        drop_vars("time")
-    
+    ds_out = (
+        ds.set_coords(["longitude", "latitude"])
+        .expand_dims("reference_time")
+        .assign_coords({"reference_time": ("reference_time", [ds["time"].values[0]])})
+        .drop_vars("time")
+    )
+
     return ds_out
