@@ -1,9 +1,20 @@
+from pathlib import Path
+import xarray as xr
+
 from .registry import register_loader
 from ..properties.properties import Space, Time, Uncertainty
 from .base import BaseLoader
 
-DEFAULTS = {"chunks": "auto", "engine": "h5netcdf", "parallel": True}
+DEFAULTS_NETCDF = {
+    "chunks": "auto",
+    "engine": "h5netcdf",
+    "parallel": True
+}
 
+DEFAULTS_ZARR = {
+    "chunks": "auto",
+    "storage_options": {"anon": True},
+}
 
 @register_loader
 class AnemoiInferenceLoader(BaseLoader):
@@ -14,25 +25,76 @@ class AnemoiInferenceLoader(BaseLoader):
     uncertainty = Uncertainty.DETERMINISTIC
 
     def _load(self):
-        import xarray as xr
 
-        files = [self.files] if isinstance(self.files, str) else self.files
-        times = xr.open_dataset(files[0])["time"].values
-        lead_times = times - times[0]
 
         kwargs = self.kwargs.copy()
-        for k, v in DEFAULTS.items():
-            kwargs[k] = self.kwargs.get(k, v)
+        
+        if isinstance(self.files,str):
+            if Path(self.files).suffix.lower() == ".zarr":
+                files = self.files
 
-        ds = xr.open_mfdataset(files, preprocess=_preprocess, **kwargs)
 
-        ds_out = (
-            ds.assign_coords({"lead_time": ("time", lead_times)})
-            .rename_dims({"values": "grid_index"})
-            .swap_dims({"time": "lead_time"})
-        )
+                for k, v in DEFAULTS_ZARR.items():
+                    kwargs[k] = self.kwargs.get(k,v)
 
-        return ds_out
+                loader = _open_zarr
+            else:
+                files = [self.files]
+
+                for k, v in DEFAULTS_NETCDF.items():
+                    kwargs[k] = self.kwargs.get(k,v)
+
+                loader = _open_mf_dataset
+        else:
+            files = self.files
+            if Path(files[0]).suffix.lower() == ".zarr":          
+                for k, v in DEFAULTS_ZARR.items():
+                    kwargs[k] = self.kwargs.get(k,v)
+                kwargs["engine"] = "zarr"
+
+            else: 
+                for k, v in DEFAULTS_NETCDF.items():
+                    kwargs[k] = self.kwargs.get(k,v)
+
+            loader = _open_mf_dataset
+
+
+        ds = loader(files, **kwargs)
+        return ds
+
+def _open_mf_dataset(files, **kwargs):
+
+    times = xr.open_dataset(files[0], engine=kwargs["engine"], chunks=kwargs["chunks"])["time"].values
+    lead_times = times - times[0]    
+
+    ds = xr.open_mfdataset(
+        files, 
+        preprocess=_preprocess,
+        **kwargs
+    )
+
+    ds_out = ds.\
+        assign_coords({"lead_time": ("time", lead_times)}).\
+        rename_dims({"values": "grid_index"}).\
+        swap_dims({"time": "lead_time"})
+
+    return ds_out
+
+def _open_zarr(files, **kwargs):
+
+    ds = xr.open_zarr(files, **kwargs)
+    times = ds["time"].values
+    lead_times = times - times[0] 
+    
+    ds_out = _preprocess(ds)
+        
+    ds_out = ds_out.\
+        assign_coords({"lead_time": ("time", lead_times)}).\
+        rename_dims({"values": "grid_index"}).\
+        swap_dims({"time": "lead_time"})
+    
+    return ds_out 
+
 
 
 def _preprocess(ds):
