@@ -17,7 +17,7 @@ dependencies = [
     "pyyaml>=6.0.3",
     "scipy>=1.17.0",
     "xarray>=2026.1.0",
-    "zarr<3.0",
+    "zarr<4.0",
     "bokeh>=3.8.2",
     "distributed>=2026.1.2",
 ]
