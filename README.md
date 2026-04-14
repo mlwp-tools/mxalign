@@ -11,7 +11,7 @@
 
 Currently, `mxalign` also acts as a full execution engine. It can load datasets (e.g., Anemoi inference outputs, observation datasets), apply transformations, align datasets in both space and time to match a reference, safely broadcast NaNs, and execute verification metrics on scaled Dask clusters (Local or Slurm).
 
-> ⚠️ **Roadmap & Future Architecture Changes (planned for v0.2.0):** 
+> ⚠️ **Roadmap & Future Architecture Changes (planned for v0.2.0):**
 > Currently, `mxalign` handles both alignment and the execution of the verification tooling pipeline, including loading and validation. In the upcoming `v0.2.0` release, this architecture will be refactored:
 > - **Loading** will be split out into [`mlwp-data-loaders`](https://github.com/mlwp-tools/mlwp-data-loaders).
 > - **Validation** of loaded `xr.Dataset`s will be moved to [`mlwp-data-specs`](https://github.com/mlwp-tools/mlwp-data-specs) (which will contain the requirements for each of the dataset traits and the validation logic).
