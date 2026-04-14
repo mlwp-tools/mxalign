@@ -1,10 +1,9 @@
 import xarray as xr
-import numpy as np
 
-from ..properties.properties import Properties, Time, Space, Uncertainty
-from ..properties.utils import properties_to_attrs
 
-def align_time(datasets: list[xr.Dataset] | dict[str, xr.Dataset], return_as: str = "forecast"):
+def align_time(
+    datasets: list[xr.Dataset] | dict[str, xr.Dataset], return_as: str = "forecast"
+):
     if isinstance(datasets, (xr.Dataset, xr.DataArray)):
         datasets = [datasets]
     if isinstance(datasets, dict):
@@ -14,7 +13,9 @@ def align_time(datasets: list[xr.Dataset] | dict[str, xr.Dataset], return_as: st
         keys = None
 
     if return_as != "forecast":
-        NotImplementedError("Currently only temporal alignment return forecast structure is supported.")
+        NotImplementedError(
+            "Currently only temporal alignment return forecast structure is supported."
+        )
 
     # Get the first forecast to start building the valid times
     valid_times_fcst = None
@@ -24,18 +25,22 @@ def align_time(datasets: list[xr.Dataset] | dict[str, xr.Dataset], return_as: st
     for ds in datasets:
         if ds.time.is_forecast():
             if first_fcst:
-                valid_times_fcst = ds.time.add_valid_time()["valid_time"].to_dataset(name="valid_times")
+                valid_times_fcst = ds.time.add_valid_time()["valid_time"].to_dataset(
+                    name="valid_times"
+                )
                 valid_times_fcst = valid_times_fcst.assign_attrs(ds.attrs)
                 first_fcst = False
             else:
-                _ds = ds.time.add_valid_time()["valid_time"].to_dataset(name="valid_times")
+                _ds = ds.time.add_valid_time()["valid_time"].to_dataset(
+                    name="valid_times"
+                )
                 _ds = _ds.assign_attrs(ds.attrs)
                 _, valid_times_fcst = _ds.time.align_with(valid_times_fcst)
         elif ds.time.is_observation():
             if first_obs:
                 valid_times_obs = ds["valid_time"].to_dataset(name="valid_times")
                 valid_times_obs = valid_times_obs.assign_attrs(ds.attrs)
-                fist_obs = False
+                first_obs = False
             else:
                 _ds = ds["valid_time"].to_dataset(name="valid_times")
                 _ds = _ds.assign_attrs(ds.attrs)
@@ -49,13 +54,9 @@ def align_time(datasets: list[xr.Dataset] | dict[str, xr.Dataset], return_as: st
         valid_times = valid_times_fcst
     else:
         _, valid_times = valid_times_obs.time.align_with(valid_times_fcst)
-    
-    datasets = [
-        ds.time.align_with(valid_times)[0]
-        for ds in datasets
-        ]
+
+    datasets = [ds.time.align_with(valid_times)[0] for ds in datasets]
     if keys is None:
         return datasets
     else:
         return {key: value for (key, value) in zip(keys, datasets)}
-    

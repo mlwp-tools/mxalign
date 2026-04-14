@@ -17,7 +17,7 @@ __all__ = [
     "Properties",
     "Time",
     "Space",
-    "Uncertainty"
+    "Uncertainty",
     "load",
     "available_loaders",
     "register_loader",
@@ -28,5 +28,9 @@ __all__ = [
     "available_interpolations",
     "register_interpolator",
     "align_time",
-    "align_space"
+    "align_space",
+    "accessors",
+    "loaders",
+    "transformations",
+    "interpolations",
 ]

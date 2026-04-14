@@ -1,0 +1,16 @@
+name: Linting Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+
+jobs:
+  pre-commit:
+    name: Run Linters
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/setup-python@v6
+    - uses: pre-commit/action@v3.0.1
