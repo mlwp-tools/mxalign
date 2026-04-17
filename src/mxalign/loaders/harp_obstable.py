@@ -7,12 +7,19 @@ from .registry import register_loader
 from ..properties.properties import Properties, Space, Time, Uncertainty
 from .base import BaseLoader
 
+# COORDS = {
+#     "longitude": "lon",
+#     "latitude":"lat",
+#     "valid_time": "validdate",
+#     "code": "SID",
+#     "altitude": "elev",
+# }
 COORDS = {
     "longitude": "lon",
     "latitude":"lat",
-    "valid_time": "validdate",
-    "code": "SID",
-    "altitude": "elev",
+    "valid_time": "time",
+    "code": "wmo_no",
+    "altitude": "amsl",
 }
 
 @register_loader
@@ -35,7 +42,7 @@ class ObstableLoader(BaseLoader):
             for f in files:
                 conn = sqlite3.connect(f)
                 c = pd.read_sql(
-                    "SELECT SID as code, MIN(lat) AS latitude, MIN(lon) AS longitude, elev as altitude FROM SYNOP GROUP BY SID",
+                    f"SELECT {COORDS['code']} as code, MIN({COORDS['latitude']}) AS latitude, MIN({COORDS['longitude']}) AS longitude, {COORDS['altitude']} as altitude FROM SYNOP GROUP BY {COORDS['code']}",
                     conn, index_col="code"
                 ).to_xarray()
                 if codes_ds is None:
@@ -56,7 +63,7 @@ class ObstableLoader(BaseLoader):
                 if end_date:
                     where_clauses.append(f"validdate < {int(pd.Timestamp(end_date).timestamp())}")
                 where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-                query = f"SELECT SID as code, validdate as valid_time, {', '.join(variables)} FROM SYNOP {where}"
+                query = f"SELECT {COORDS['code']} as code, {COORDS['valid_time']} as valid_time, {', '.join(variables)} FROM SYNOP {where}"
                 dfs.append(pd.read_sql(query, conn, index_col=["code", "valid_time"],
                                        parse_dates={"valid_time": {"unit": "s"}}))
                 conn.close()
@@ -88,41 +95,47 @@ class ObstableLoader(BaseLoader):
                     conn
                 ).columns if var not in COORDS.values()
             ]
-            print(variables)
+            
         else:
             variables = self.variables
-
+        print(variables)
         # Read the SIDs
         codes = pd.read_sql(
-            f"SELECT SID as code, MIN(lat) AS latitude, MIN(lon) AS longitude, elev as altitude FROM SYNOP GROUP BY SID",
+            f"SELECT {COORDS['code']} as code, MIN({COORDS['latitude']}) AS latitude, MIN({COORDS['longitude']}) AS longitude, {COORDS['altitude']} as altitude FROM SYNOP GROUP BY {COORDS['code']}",
             conn,
             index_col="code"
         ).to_xarray()
-
+        print("codes:", codes)
         # Optional date filtering (start_date / end_date as "YYYY-MM-DD" strings)
         where_clauses = []
         start_date = self.kwargs.get("start_date")
         end_date   = self.kwargs.get("end_date")
-        if start_date:
-            where_clauses.append(f"validdate >= {int(pd.Timestamp(start_date).timestamp())}")
-        if end_date:
-            where_clauses.append(f"validdate < {int(pd.Timestamp(end_date).timestamp())}")
+        print("start_date:", start_date, "end_date:", end_date)
+        date_list = pd.date_range(start=start_date,end=end_date,freq="6h")
+        print("date_list:", date_list)
+        dates = date_list.strftime("%Y%m%d%H").astype(int).tolist()
+        where_clauses.append(f"valid_time IN ({','.join([str(d) for d in dates])})")
+        # if start_date:
+        #     where_clauses.append(f"{COORDS['valid_time']}>= {int(pd.Timestamp(start_date).timestamp())}")
+        # if end_date:
+        #     where_clauses.append(f"{COORDS['valid_time']} < {int(pd.Timestamp(end_date).timestamp())}")
         where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-
+        print("date filtering where clause:", where)
         # Read the data
         query = f"""
-                SELECT SID as code, validdate as valid_time, {", ".join(variables)}
+                SELECT {COORDS['code']} as code, {COORDS['valid_time']} as valid_time, {", ".join(variables)}
                 FROM SYNOP
                 {where}
             """
+        print("SQL query:", query)
         df = pd.read_sql(
                 query,
                 conn,
                 index_col=["code","valid_time"],
-                parse_dates={"valid_time": {"unit": "s"}}
+                # parse_dates={"valid_time": {"unit": "s"}}
             )
-
-        ds = df.to_xarray()
+        print("DataFrame head:\n", df.head())
+        ds = df[df.index.to_frame().notna().all(axis=1)].to_xarray()
         lon_values = codes["longitude"].sel(code=ds["code"]).values
         lat_values = codes["latitude"].sel(code=ds["code"]).values
         alt_values = codes["altitude"].sel(code=ds["code"]).values
@@ -132,7 +145,8 @@ class ObstableLoader(BaseLoader):
             latitude=("code", lat_values),
             altitude=("code", alt_values)
         )
-
+        ds["valid_time"]=pd.to_datetime(ds["valid_time"].astype(str), format="%Y%m%d%H.0")
+        print(ds.rename_dims({"code":"point_index"}).transpose("valid_time","point_index"))
         return ds.rename_dims({"code":"point_index"}).transpose("valid_time","point_index")
 
 

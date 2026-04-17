@@ -46,9 +46,9 @@ def run_slurm(args):
         interface = "ib0",
         memory = args.memory,
         job_extra_directives = ["--qos=normal"],
-        walltime = "02:00:00",
+        walltime = "04:00:00",
     )
-    cluster.scale(jobs=3)
+    cluster.scale(jobs=1)
     client = Client(cluster)
 
     logging.basicConfig(

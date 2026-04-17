@@ -2,7 +2,98 @@ import numpy as np
 import xarray as xr
 from scipy.fft import dctn
 from scores.processing import binary_discretise
+from scores.probability import brier_score_for_ensemble
 
+def brier_score(y_true, y_prob):
+    return np.nanmean((y_prob - y_true) ** 2)
+
+climatological_probabilities_june = {'2t': [np.float64(0.8814373719365522),
+  np.float64(0.8489858816865665),
+  np.float64(0.8102387165519164),
+  np.float64(0.7645984011618234),
+  np.float64(0.7126808971299738),
+  np.float64(0.6560375699611863),
+  np.float64(0.5960149575888615),
+  np.float64(0.5359679433758985),
+  np.float64(0.47820287098746855),
+  np.float64(0.42469037391753806),
+  np.float64(0.3765322322434091),
+  np.float64(0.33256159431274435),
+  np.float64(0.29172326538036925),
+  np.float64(0.25383460136635516),
+  np.float64(0.218582815040703),
+  np.float64(0.18635020190674503)],
+ '10si': [np.float64(1.0),
+  np.float64(0.9330132650466857),
+  np.float64(0.8776153669316226),
+  np.float64(0.720761099751994),
+  np.float64(0.6503869289125646),
+  np.float64(0.5030174822140585),
+  np.float64(0.44248438353995423),
+  np.float64(0.29364273436869615),
+  np.float64(0.1923812380202759),
+  np.float64(0.12516842026737146),
+  np.float64(0.08137001609222351),
+  np.float64(0.05291555464885611),
+  np.float64(0.034378287525558014),
+  np.float64(0.022424064344534964)],
+ 'tp': [np.float64(0.16921787481090805),
+  np.float64(0.16921787481090805),
+  np.float64(0.16921787481090805),
+  np.float64(0.08852365182550391),
+  np.float64(0.06561184022241302),
+  np.float64(0.04894312931845129),
+  np.float64(0.038266077926325685),
+  np.float64(0.030624718917371927)]}
+def brier_skill_score(fcst, obs, event_thresholds, ensemble_member_dim):
+    """Brier Skill Score with vectorized xarray operations."""
+    bss_results = {var: [] for var in fcst.data_vars}
+    for var in fcst.data_vars:
+        results = []
+        for t in event_thresholds[var]:
+            # y_true = (obs[var].values[~np.isnan(obs[var].values)] >= t)
+            # # Average over ensemble members to get probability of event
+            # p_clim = y_true.mean()  # Climatological probability of event   
+            p_clim = climatological_probabilities_june[var][event_thresholds[var].index(t)]  # Use pre-computed climatological probabilities 
+            print(f"Climatology (event probability) for {var} at threshold {t}: {p_clim:.4f}") 
+            results_l = []    
+            for lead_time in fcst["lead_time"].values:    
+                y_true_val = obs[var].sel(lead_time=lead_time).values
+                print(f"Original true array for {var} at lead time {lead_time} and threshold {t}: ", y_true_val)
+                y_true = (y_true_val[~np.isnan(y_true_val)] >= t).astype(int)
+                print(f"Processed true array for {var} at lead time {lead_time} and threshold {t}: ", y_true)
+                # y_true = (obs[var].sel(lead_time=lead_time).values[~np.isnan(obs[var].sel(lead_time=lead_time).values)] >= t).astype(int)
+                y_prob = (fcst[var].sel(lead_time=lead_time) >= t).mean(dim=ensemble_member_dim).values.flatten()
+                y_prob = y_prob[~np.isnan(y_true_val).flatten()]
+                print("probability array: ", y_prob)
+                print("true array: ", y_true)
+                bs_fcst = brier_score(y_true, y_prob)
+                print(f"Brier Score for {var} at threshold {t} at lead time {lead_time}: {bs_fcst:.4f}")
+                bs_clim = brier_score(np.full_like(y_true, p_clim), y_prob)
+                print(f"Brier Score for climatology of {var} at threshold {t} at lead time {lead_time}: {bs_clim:.4f}")
+                bss = 1 - (bs_fcst / bs_clim) if bs_clim > 0 else np.nan  # Avoid division by zero    
+                results_l.append(bss)
+            results.append(results_l)    
+        bss_results[var] = {"dims": {f"threshold_{var}": np.array(event_thresholds[var]), "lead_time": fcst["lead_time"].values}, "data": np.array(results)}
+
+    xr_results = xr.Dataset.from_dict(bss_results)
+    return xr_results
+
+    # # Calculate Brier Score
+    # bs = brier_score_for_ensemble(fcst, obs, event_thresholds=event_thresholds, ensemble_member_dim=ensemble_member_dim, preserve_dims=preserve_dims)
+
+    # # Calculate Climatology
+    # # climatology is often just the mean of the observations
+    # climatology = obs.mean(dim=['point_index', "reference_time"], skipna=True) 
+    # print(f"Climatology (event probability): {climatology['2t'].values}")
+    # clim = climatology.expand_dims({"point_index": np.arange(obs.sizes["point_index"]), "reference_time": obs["reference_time"]}, axis = [0,1])
+    # print(f"Climatology array: {clim['2t'].values}")
+
+def ensemble_mean(fcst):
+    return fcst.mean(dim=["member", "point_index", "reference_time"])
+
+def ensemble_spread(fcst):
+    return fcst.std(dim=["member", "point_index", "reference_time"])
 
 def _build_thresholds(threshold_min, threshold_max, threshold_by):
     """Build a sorted, deduplicated threshold array from range spec(s).
@@ -363,11 +454,16 @@ def power_spectrum(observations, forecasts, dim_x, dim_y, res,
                 chunk = da_lt.isel(reference_time=slice(t_start, t_end)).load().values
                 if chunk.ndim == 1:
                     chunk = chunk[np.newaxis, :]
+                print("chunk shape: ", chunk.shape)
                 for t in range(chunk.shape[0]):
                     field = chunk[t]
+                    print("field shape: ", field.shape)
                     if np.any(np.isnan(field)):
                         continue
-                    field_2d = field.reshape(dim_x, dim_y)
+                    if field.size == dim_x * dim_y:
+                        field_2d = field.reshape(dim_x, dim_y)
+                    else:
+                        field_2d = field[0].reshape(dim_x, dim_y)  # handle member grid_index (only plot one member for now)
                     field_2d = field_2d - np.mean(field_2d)
                     sp        = dctn(field_2d, type=2, norm='ortho')  # real output
                     power_2d  = sp ** 2                               # no rfft_w needed

@@ -149,7 +149,12 @@ class Runner():
                 config_metric = config_metric.copy()
                 func_path = config_metric.pop("function")
                 inputs = config_metric.pop("inputs")
-                
+                print("metric name", metric_name)
+                print("config metric", config_metric)
+                print("reference", reference[common_vars])
+                print("inputs", inputs)
+                print("func_path", func_path)
+                print("date type", reference["reference_time"].dtype)
                 metric = Metric(
                     name=metric_name,
                     func_path=func_path,
@@ -160,22 +165,31 @@ class Runner():
                 models = {}
                 for ds_name, ds in self.datasets.items():
                     if ds_name != config["reference"]:
+                        print("datasets ", ds[common_vars])
+                        print("member type", ds["member"].dtype)
                         models[ds_name] = metric.compute(ds[common_vars])
+                print("metric computed")
                 models = xr.concat(
                     models.values(),
-                    dim = xr.Variable("model", list(models.keys()))
+                    dim = xr.Variable("model", list(models.keys())),
+                    coords="minimal"
                 )
+                print("metric concatenated")
                 metrics[metric.name] = models
             metrics = xr.concat(
                 metrics.values(),
-                dim = xr.Variable("metric", list(metrics.keys()))
+                dim = xr.Variable("metric", list(metrics.keys())),
+                coords="minimal"
             )
             self.metrics = metrics.transpose("model", "metric", ...).compute()
-        
+            print("metrics computed")
+            print(self.metrics)
+        print("config_save_metrics", config_save_metrics)
         if config_save_metrics:
             config = config_save_metrics.copy()
             method = config.pop("method")
             save_metrics(method, self.metrics, **config)
+            print("metrics saved")
 
 
     

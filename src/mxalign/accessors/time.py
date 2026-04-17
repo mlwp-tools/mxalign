@@ -112,6 +112,7 @@ def _align_observation_forecast(ds_observation, ds_forecast, only_common=False):
         )
     if ds_forecast_cut.valid_time.max().values > ds_observation.valid_time.max().values:
         # The forecast time-step/lead times might not always align with the maximum observation time
+        print(ds_forecast_cut.valid_time.values, ds_observation.valid_time.values)
         valid_diff = (ds_forecast_cut["valid_time"]-(ds_observation["valid_time"].max())).isel(lead_time=-1)
         last_valid_index = int(np.abs(valid_diff.where(valid_diff<=0, drop=True)).argmin(dim="reference_time").values)
         max_reference_time = ds_forecast_cut.isel(reference_time=last_valid_index)["reference_time"].values

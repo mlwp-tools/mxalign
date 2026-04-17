@@ -47,10 +47,10 @@ alignment:
   space:
     interpolation:
       method: delaunay
-  # save:
-  #   method: to_netcdf
-  #   datasets: all
-  #   path: "{name}_{year:int(%02d)}.nc"
+  save:
+    method: to_netcdf
+    datasets: all
+    path: "{name}.nc"
 
 verification:
   reference: cerra

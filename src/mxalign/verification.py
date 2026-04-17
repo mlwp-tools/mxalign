@@ -53,6 +53,7 @@ def verify(fcst, obs, func_path, inputs, **kwargs):
     }
 
     all_kwargs = {**input_kwargs, **kwargs}
-
+    print("function", func)
+    print("kwargs", **all_kwargs)
     result = func(**all_kwargs)
     return(result)

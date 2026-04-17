@@ -9,42 +9,20 @@ import xarray as xr
 DEFAULTS={
     "engine": "h5netcdf",
     "parallel": True,
-    "combine": "nested",
-    "concat_dim": "reference_time",
 }
 
-# def _extract_member_index(filename):
-#     """
-#     Extract member index from filename.
-#     Supports patterns like:
-#     - mbr000, mbr001, etc. (anemoi convention)
-#     - member_0, member_1, etc.
-#     - _m000, _m001, etc.
-    
-#     Returns None if no member index is found.
-#     """
-#     fname = Path(filename).stem  # Get filename without extension
-    
-#     # Try different patterns
-#     patterns = [
-#         r'_mbr(\d+)',        # _mbr000
-#         r'_member(\d+)',     # _member0
-#         r'_m(\d+)(?:_|\.)',  # _m000_
-#         r'mbr(\d+)',         # mbr000
-#         r'member(\d+)',      # member0
-#     ]
-    
-#     for pattern in patterns:
-#         match = re.search(pattern, fname)
-#         if match:
-#             return int(match.group(1))
-    
-#     return None
+DROP_DIMS = [
+    "height1",
+    "height_above_msl",
+    "height",
+    "height2",
+]
+
 
 @register_loader
-class AnemoiInferenceLoader(BaseLoader):
+class BrisInferenceLoader(BaseLoader):
 
-    name = "anemoi-inference"
+    name = "bris-inference"
     
     space = Space.GRID
     time=Time.FORECAST
@@ -112,45 +90,46 @@ class AnemoiInferenceLoader(BaseLoader):
         import pandas as pd
 
         engine = self.kwargs.get("engine", DEFAULTS["engine"])
-
-        if len(files) % self.ens_size != 0:
-            raise ValueError(f"Number of files ({len(files)}) must be divisible by ens_size ({self.ens_size}).")
-
         # Get lead times from the first file
-        times = xr.open_dataset(files[0], engine=engine)["time"].values
+        ds = xr.open_dataset(files[0], engine=engine)
+        print("first dataset", ds)
+        times = ds["time"].values
         lead_times = pd.to_timedelta(times - times[0])
 
-        # Group files by reference_time (batches of ens_size)
-        batches = [files[i:i+self.ens_size] for i in range(0, len(files), self.ens_size)]
+        kwargs = self.kwargs.copy()
+        for k, v in DEFAULTS.items():
+            kwargs[k] = self.kwargs.get(k, v)
 
-        ref_datasets = []
-        for batch in batches:
-            member_datasets = []
-            for member_idx, filepath in enumerate(batch):
-                ds = xr.open_dataset(filepath, engine=engine)
-                ds = _preprocess_with_member(ds, member_idx)
-                member_datasets.append(ds)
-            ref_datasets.append(xr.concat(member_datasets, dim="member"))
+        ds = xr.open_mfdataset(
+            files,
+            preprocess=_preprocess_with_member,
+             concat_dim="forecast_reference_time",
+             combine="nested", 
+             join="override",
+            **kwargs,
+        )
+        print("dataset after opening", ds)
+        print("lead times", lead_times)
 
-        ds = xr.concat(ref_datasets, dim="reference_time")
+        # ds = ds.sel(lead_time=slice(0,self.max_lead_time))
+        # ds = ds.rename({"location":"grid_index"})
+        print("ds before stacking", ds)
+        ds = ds.stack(grid_index=('x', 'y')).reset_index("grid_index").drop_vars(["x", "y"])
+        print("ds after stacking", ds)
+        ds_coords = ds.assign_coords(
+            {
+                "lead_time": ("lead_time", np.array(lead_times)),
+                "valid_time": (
+                    ["forecast_reference_time", "lead_time"],
+                    ds["forecast_reference_time"].data[:,np.newaxis] + \
+                        np.array(lead_times)[np.newaxis,:]
+                ),
+                "ensemble_member": ("ensemble_member", ds["ensemble_member"].data[:self.ens_size+1])
+                }
+            )
+        ds_coords = ds_coords.rename({'forecast_reference_time': 'reference_time', "ensemble_member": "member"}).chunk({"member": -1, "grid_index": -1})
 
-        # Convert coordinates to Python types to avoid numpy serialization issues
-        ds_out = ds.\
-            rename_dims({"values": "grid_index"}).\
-            assign_coords({
-                "lead_time": ("time", lead_times.to_pytimedelta()),
-                "member": ("member", ds.member.values.astype(int).tolist()),
-                "reference_time": ("reference_time", pd.to_datetime(ds.reference_time.values).to_pydatetime()),
-            }).\
-            swap_dims({"time": "lead_time"}).\
-            chunk({"member": -1, "grid_index": -1, "lead_time": 1})
-
-        print("dataset", ds_out)
-        print("member type", ds_out["member"].dtype)
-        print("date type", ds_out["reference_time"].dtype)
-        # print("grid_index", ds_out["grid_index"].dtype)
-        print("2t", ds_out["2t"].dtype)
-        return ds_out
+        return ds_coords
 
     # def _get_properties(self, ds):
     #     """Override to set uncertainty based on member presence."""
@@ -168,32 +147,33 @@ class AnemoiInferenceLoader(BaseLoader):
 
 def _preprocess_deterministic(ds):
     """Preprocess a single forecast file without member dimension."""
-    import pandas as pd
-    
-    ds_out = ds.\
-        set_coords(["longitude", "latitude"]).\
-        expand_dims("reference_time").\
-        assign_coords(
-            {"reference_time": ("reference_time", [pd.Timestamp(ds["time"].values[0]).to_pydatetime()])}
-        ).\
-        drop_vars("time")
-    
-    return ds_out
+    print("dataset before preprocessing", ds)
+    for var in DROP_DIMS:
+        if var in ds.coords:
+            ds = ds.squeeze(var)
+            ds = ds.drop(var)
+
+    ds_renamed = ds.rename_dims(
+        {
+            "time":"lead_time",
+        }
+    )
+
+    return ds_renamed
 
 
-def _preprocess_with_member(ds, member_idx):
+def _preprocess_with_member(ds):
     """Preprocess and add member dimension with explicit member index."""
-    import pandas as pd
-    
-    member_idx = int(member_idx)
-    ds_out = ds.\
-        set_coords(["longitude", "latitude"]).\
-        expand_dims("reference_time").\
-        assign_coords(
-            {"reference_time": ("reference_time", [pd.Timestamp(ds["time"].values[0]).to_pydatetime()])}
-        ).\
-        expand_dims("member").\
-        assign_coords({"member": ("member", [member_idx])}).\
-        drop_vars("time")
+    print("dataset before preprocessing", ds)
+    for var in DROP_DIMS:
+        if var in ds.coords:
+            ds = ds.squeeze(var)
+            ds = ds.drop(var)
 
-    return ds_out
+    ds_renamed = ds.rename_dims(
+        {
+            "time":"lead_time",
+        }
+    )
+
+    return ds_renamed
