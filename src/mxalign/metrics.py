@@ -415,120 +415,134 @@ def brier_score_chunked(fcst, obs, threshold_min, threshold_max, threshold_by,
 
 
 def power_spectrum(observations, forecasts, dim_x, dim_y, res,
-                   variables=None, ref_time_chunk=50):
-    """2D power spectrum averaged over reference_time, one curve per lead_time.
+                   variables=None, n_bins=None, compute_obs=True, compute_fct=True, ref_time_chunk=50):
+    """2D isotropic power spectrum, one curve per (reference_time, lead_time).
 
-    Applies a 2-D rfft2 to every (reference_time, lead_time) slice of each
-    variable, then averages spectra across reference_time.  Both forecast and
-    reference (observation) spectra are returned so that a single saved file
-    contains all curves needed for comparison plots.
-
-    Grid layout assumption: ``grid_index`` is ordered with the y-axis varying
-    slowest (row-major), i.e. ``field.reshape(dim_x, dim_y)`` gives the 2-D
-    field.  A 90° rotation is applied before the FFT (same convention as the
-    standalone ``compute_power_spectra.py``).
+    Follows the DCTPowerSpectrum approach: physical wavenumbers in rad/m,
+    uniform linear binning via np.digitize, per-bin mean of DCT-II power.
+    Ensemble members (``member`` dim) are averaged over if present.
 
     Parameters
     ----------
     observations, forecasts : xr.Dataset
-        Aligned datasets, both with dimensions
-        ``(reference_time, lead_time, grid_index)``.
+        Aligned datasets with dimensions ``(reference_time, lead_time, grid_index)``
+        (plus optional ``member`` dim for ensemble forecasts).
         ``len(grid_index)`` must equal ``dim_x * dim_y``.
     dim_x, dim_y : int
-        Shape of the 2-D grid (rows × columns after reshape + rot90).
+        Shape of the 2-D grid (rows × columns).
     res : float
-        Grid spacing in **metres** — used to convert FFT bin indices to
-        physical wavelengths.
+        Grid spacing in **metres** (uniform, dx = dy = res).
     variables : list of str, optional
-        Subset of variables to process.  All common data_vars are used if None.
+        Subset of variables to process.  All data_vars of ``forecasts`` are used if None.
+    n_bins : int, optional
+        Number of wavenumber bins.  Defaults to ``min(dim_x, dim_y) // 2``.
+    compute_obs : bool
+        If False, skip the observations spectrum (``{var}_obs``).
+    compute_fct : bool
+        If False, skip the forecast spectrum (``{var}_fct``).
+        Use ``compute_obs=True, compute_fct=False`` when the dataset of interest
+        is the reference (e.g. computing the reanalysis spectrum standalone).
     ref_time_chunk : int
-        Number of reference times loaded per ``.load()`` call.  Decrease if
-        memory is tight; increase to reduce I/O round-trips (default: 50).
+        Number of reference times loaded per ``.load()`` call (default: 50).
 
     Returns
     -------
     xr.Dataset
-        Variables ``{var}_obs`` and ``{var}_fct`` for each processed variable,
-        with dimensions ``(reference_time, lead_time, wavelength)``.
-        ``wavelength`` is in metres.  Fields with any NaN are stored as NaN
-        in the output so that averaging over reference_time can be done in
-        post-processing.
+        ``{var}_fct`` for each variable (plus ``{var}_obs`` if ``compute_obs=True``),
+        with dimensions ``(reference_time, lead_time, k)``.
+        ``k`` is the bin-centre wavenumber in rad/m.
     """
     if variables is not None:
-        observations = observations[variables]
-        forecasts    = forecasts[variables]
+        if compute_obs:
+            observations = observations[variables]
+        if compute_fct:
+            forecasts = forecasts[variables]
 
-    # ── Isotropic radial wavenumber binning ─────────────────────────────────
-    # DCT-II on (dim_x, dim_y) gives a real output of the same shape.
-    # Cosine mode (kx, ky) has spatial frequency kx/(2*dim_x*res) in x and
-    # ky/(2*dim_y*res) in y — the factor 2 arises from the DCT's implicit
-    # even-symmetric mirroring of the domain.
-    # We bin coefficients by radial wavenumber k = sqrt(kx²+ky²) (in grid
-    # units), using integer bins so each bin has roughly the same annular width.
-    kx_idx = np.arange(dim_x, dtype=float)               # shape (dim_x,)
-    ky_idx = np.arange(dim_y, dtype=float)                # shape (dim_y,)
-    KX, KY = np.meshgrid(kx_idx, ky_idx, indexing='ij')  # (dim_x, dim_y)
+    # ── Wavenumber grid (rad/m) ───────────────────────────────────────────────
+    dx = dy = res
+    kx = np.pi * np.arange(dim_x) / (dim_x * dx)
+    ky = np.pi * np.arange(dim_y) / (dim_y * dy)
+    KX, KY    = np.meshgrid(kx, ky, indexing='ij')
+    k         = np.sqrt(KX ** 2 + KY ** 2)
+    k_max     = k.max()
+    _n_bins   = n_bins if n_bins is not None else min(dim_x, dim_y) // 2
+    k_edges   = np.linspace(0.0, k_max, _n_bins + 1)
+    k_centers = 0.5 * (k_edges[1:] + k_edges[:-1])
+    digitized = np.digitize(k.flatten(), k_edges)
 
-    K_norm  = np.sqrt((KX / dim_x) ** 2 + (KY / dim_y) ** 2)
-    k_bins  = np.round(K_norm * min(dim_x, dim_y)).astype(int)  # integer bin index
-
-    n_freq     = min(dim_x, dim_y) // 2
-    valid_bins = np.arange(1, n_freq + 1)
-
-    # Representative physical wavelength per bin (m): 1 / mean(K_phys) in bin
-    # Factor 2 in denominator: DCT mirrors the domain, doubling effective length
-    K_phys = np.sqrt((KX / (2 * dim_x * res)) ** 2 + (KY / (2 * dim_y * res)) ** 2)
-    wavelengths = np.zeros(n_freq, dtype=np.float64)
-    for _b in valid_bins:
-        _m = k_bins == _b
-        if _m.any():
-            wavelengths[_b - 1] = 1.0 / K_phys[_m].mean()
-
-    k_bins_flat = k_bins.ravel()
+    def _field_spectrum(field_1d):
+        """Isotropic power spectrum of a single 1-D field (grid_index order)."""
+        field_2d = field_1d.reshape(dim_x, dim_y)
+        if np.any(np.isnan(field_2d)):
+            return None
+        P = np.abs(dctn(field_2d, type=2, norm='ortho')) ** 2
+        return np.array(
+            [P.flatten()[digitized == i].mean() if np.any(digitized == i) else 0.0
+             for i in range(1, _n_bins + 1)],
+            dtype=np.float32,
+        )
 
     def _spectrum(da):
-        """One isotropic power spectrum per (reference_time, lead_time) slice."""
         lead_times = da.lead_time.values
         ref_times  = da.reference_time.values
         n_rt       = len(ref_times)
         n_lt       = len(lead_times)
+        has_member = "member" in da.dims
+        members    = da.member.values if has_member else None
+        n_mbr      = len(members) if has_member else 1
 
-        out = np.full((n_rt, n_lt, n_freq), np.nan, dtype=np.float64)
+        # Identify the spatial dim (everything that is not a time or member dim)
+        grid_dim = next(d for d in da.dims if d not in ("reference_time", "lead_time", "member"))
+
+        # Normalise dim order so numpy indexing is predictable
+        if has_member:
+            da = da.transpose("reference_time", "lead_time", grid_dim, "member")
+            out = np.full((n_rt, n_lt, n_mbr, _n_bins), np.nan, dtype=np.float32)
+        else:
+            da = da.transpose("reference_time", "lead_time", grid_dim)
+            out = np.full((n_rt, n_lt, _n_bins), np.nan, dtype=np.float32)
 
         for lt_idx in range(n_lt):
             da_lt = da.isel(lead_time=lt_idx)
             for t_start in range(0, n_rt, ref_time_chunk):
                 t_end = min(t_start + ref_time_chunk, n_rt)
                 chunk = da_lt.isel(reference_time=slice(t_start, t_end)).load().values
+                # chunk shape: (t_chunk, grid) or (t_chunk, grid, member)
                 if chunk.ndim == 1:
                     chunk = chunk[np.newaxis, :]
                 for t in range(chunk.shape[0]):
-                    field = chunk[t]
-                    if np.any(np.isnan(field)):
-                        continue
-                    field_2d = field.reshape(dim_x, dim_y)
-                    field_2d = field_2d - np.mean(field_2d)
-                    sp        = dctn(field_2d, type=2, norm='ortho')  # real output
-                    power_2d  = sp ** 2                               # no rfft_w needed
-                    binned    = np.bincount(k_bins_flat, weights=power_2d.ravel(),
-                                            minlength=n_freq + 1)
-                    out[t_start + t, lt_idx] = binned[1: n_freq + 1]
+                    if has_member:
+                        for m_idx in range(n_mbr):
+                            s = _field_spectrum(chunk[t, :, m_idx])
+                            if s is not None:
+                                out[t_start + t, lt_idx, m_idx] = s
+                    else:
+                        s = _field_spectrum(chunk[t])
+                        if s is not None:
+                            out[t_start + t, lt_idx] = s
 
+        if has_member:
+            return xr.DataArray(
+                out,
+                dims=["reference_time", "lead_time", "member", "k"],
+                coords={"reference_time": ref_times, "lead_time": lead_times,
+                        "member": members, "k": k_centers},
+            )
         return xr.DataArray(
             out,
-            dims=["reference_time", "lead_time", "wavelength"],
-            coords={
-                "reference_time": ref_times,
-                "lead_time":      lead_times,
-                "wavelength":     wavelengths,
-            },
+            dims=["reference_time", "lead_time", "k"],
+            coords={"reference_time": ref_times, "lead_time": lead_times, "k": k_centers},
         )
 
+    iter_vars = list(observations.data_vars) if not compute_fct else list(forecasts.data_vars)
+
     per_var = {}
-    for var in list(observations.data_vars):
-        print(f"  power_spectrum: {var} obs ...", flush=True)
-        per_var[f"{var}_obs"] = _spectrum(observations[var])
-        print(f"  power_spectrum: {var} fct ...", flush=True)
-        per_var[f"{var}_fct"] = _spectrum(forecasts[var])
+    for var in iter_vars:
+        if compute_obs:
+            print(f"  power_spectrum: {var} obs ...", flush=True)
+            per_var[f"{var}_obs"] = _spectrum(observations[var])
+        if compute_fct:
+            print(f"  power_spectrum: {var} fct ...", flush=True)
+            per_var[f"{var}_fct"] = _spectrum(forecasts[var])
 
     return xr.Dataset(per_var)
