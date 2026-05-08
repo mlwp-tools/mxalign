@@ -275,6 +275,145 @@ def spread_skill(observations, forecasts, dim, member_dim="member", skipna=True,
     return xr.Dataset(per_var)
 
 
+def brier_score(fcst, obs, threshold_min, threshold_max, threshold_by,
+                reduce_dims, ensemble_member_dim="member", variables=None,
+                fair_correction=False):
+    """Brier Score for ensemble forecasts, with optional per-call variable filtering.
+
+    Thin wrapper around ``scores.probability.brier_score_for_ensemble`` that
+    adds a ``variables`` parameter so that different thresholds can be used for
+    different variables by defining multiple metrics in the config.
+    Threshold ranges follow the same convention as ``ets``.
+
+    Parameters
+    ----------
+    observations, forecasts : xr.Dataset
+        Aligned datasets.
+    threshold_min, threshold_max, threshold_by : scalar or list
+        Define threshold range(s) via np.arange(min, max, by).
+        Use lists for multiple segments, e.g.
+            min=[0, 5], max=[5, 30], by=[0.5, 2]
+    reduce_dims : list of str
+        Dimensions to reduce over (e.g. ["grid_index", "reference_time"]).
+    ensemble_member_dim : str
+        Name of the ensemble member dimension (default: "member").
+    variables : list of str, optional
+        Subset of variables to compute BS for.  All common variables if None.
+    fair_correction : bool
+        Apply the fair Brier score correction (default: False).
+
+    Returns
+    -------
+    xr.Dataset
+        Brier Score for each variable with an extra ``threshold`` dimension.
+    """
+    from scores.probability import brier_score_for_ensemble
+
+    if variables is not None:
+        obs  = obs[variables]
+        fcst = fcst[variables]
+
+    thresholds = _build_thresholds(threshold_min, threshold_max, threshold_by).tolist()
+
+    return brier_score_for_ensemble(
+        fcst, obs,
+        ensemble_member_dim=ensemble_member_dim,
+        event_thresholds=thresholds,
+        reduce_dims=reduce_dims,
+        fair_correction=fair_correction,
+    )
+
+
+def brier_score_chunked(fcst, obs, threshold_min, threshold_max, threshold_by,
+                        reduce_dims, ensemble_member_dim="member", variables=None,
+                        fair_correction=False):
+    """Brier Score computed with explicit chunking to avoid Dask shuffle operations.
+
+    Replaces the ``scores`` library call in ``brier_score`` with a purely
+    element-wise implementation:
+
+        BS(θ) = mean( (P̂(X > θ) - I(Y > θ))² )
+
+    where P̂(X > θ) = fraction of ensemble members exceeding θ.  This is
+    computed locally per grid-point/time-step — no sorting, no data
+    redistribution, no Dask shuffles.
+
+    Chunking strategy (same as spread_skill): reduction dims get chunk=-1 so
+    each task covers a full spatial/temporal slice; all other dims (e.g.
+    lead_time) get chunk=1 so tasks are independent.
+
+    Parameters
+    ----------
+    fcst, obs : xr.Dataset
+        Aligned forecast (with member dim) and observation datasets.
+    threshold_min, threshold_max, threshold_by : scalar or list
+        Define threshold range(s) via np.arange(min, max, by).
+    reduce_dims : list of str
+        Dimensions to average over (e.g. ["grid_index", "reference_time"]).
+    ensemble_member_dim : str
+        Name of the ensemble member dimension (default: "member").
+    variables : list of str, optional
+        Subset of variables to compute BS for.
+    fair_correction : bool
+        Apply the fair (unbiased) Brier score correction: multiply the
+        spread term by m/(m-1) where m is the ensemble size (default: False).
+
+    Returns
+    -------
+    xr.Dataset
+        Brier Score for each variable with an extra ``threshold`` dimension.
+    """
+    if variables is not None:
+        obs  = obs[variables]
+        fcst = fcst[variables]
+
+    thresholds = _build_thresholds(threshold_min, threshold_max, threshold_by)
+    dim_list   = [reduce_dims] if isinstance(reduce_dims, str) else list(reduce_dims)
+
+    # Chunk: reduction dims fully in-memory per task, lead_time one slice at a time
+    obs_chunk = {d: -1 for d in dim_list}
+    for d in obs.dims:
+        if d not in obs_chunk:
+            obs_chunk[d] = 1
+    obs = obs.chunk(obs_chunk)
+
+    fct_chunk = {d: -1 for d in dim_list + [ensemble_member_dim]}
+    for d in fcst.dims:
+        if d not in fct_chunk:
+            fct_chunk[d] = 1
+    fcst = fcst.chunk(fct_chunk)
+
+    m = fcst.sizes[ensemble_member_dim]  # ensemble size
+
+    per_var = {}
+    for var in list(obs.data_vars):
+        obs_v = obs[var].where(np.abs(obs[var]) < 1e10)
+        fct_v = fcst[var].where(np.abs(fcst[var]) < 1e10)
+
+        bs_per_thresh = []
+        for thresh in thresholds:
+            # Exceedance probability: fraction of members > threshold (local op)
+            p_fcst = (fct_v > thresh).sum(dim=ensemble_member_dim) / m
+            o_bin  = (obs_v > thresh).astype(float)
+
+            if fair_correction:
+                # Fair BS: BS_fair = BS - p*(1-p)/(m-1)
+                bs = ((p_fcst - o_bin) ** 2 - p_fcst * (1 - p_fcst) / (m - 1)).mean(
+                    dim=dim_list, skipna=True
+                )
+            else:
+                bs = ((p_fcst - o_bin) ** 2).mean(dim=dim_list, skipna=True)
+
+            bs_per_thresh.append(bs)
+
+        per_var[var] = xr.concat(
+            bs_per_thresh,
+            dim=xr.Variable("threshold", thresholds)
+        ).compute()
+
+    return xr.Dataset(per_var)
+
+
 def power_spectrum(observations, forecasts, dim_x, dim_y, res,
                    variables=None, ref_time_chunk=50):
     """2D power spectrum averaged over reference_time, one curve per lead_time.
