@@ -2,61 +2,35 @@ import xarray as xr
 
 
 def align_time(
-    datasets: list[xr.Dataset] | dict[str, xr.Dataset], return_as: str = "forecast"
+    datasets: list[xr.Dataset] | dict[str, xr.Dataset],
+    reference: str | xr.Dataset,
+    **kwargs,
 ):
-    if isinstance(datasets, (xr.Dataset, xr.DataArray)):
-        datasets = [datasets]
+    """Align all datasets temporally to a reference dataset.
+
+    Each non-reference dataset is aligned by calling ``ds.mx.align_time_with(ref_ds)``.
+    Extra kwargs are forwarded to ``align_time_with`` (e.g. ``lead_time``, ``join``).
+
+    Parameters
+    ----------
+    datasets : list or dict of xr.Dataset
+    reference : str or xr.Dataset
+        Key into *datasets* dict, or an xr.Dataset to align to.
+    """
     if isinstance(datasets, dict):
-        keys = datasets.keys()
-        datasets = datasets.values()
+        keys = list(datasets.keys())
+        ds_list = list(datasets.values())
+        ref_ds = datasets[reference] if isinstance(reference, str) else reference
     else:
+        ds_list = [datasets] if isinstance(datasets, xr.Dataset) else list(datasets)
         keys = None
+        ref_ds = reference
 
-    if return_as != "forecast":
-        NotImplementedError(
-            "Currently only temporal alignment return forecast structure is supported."
-        )
+    aligned = [
+        ds if ds is ref_ds else ds.mx.align_time_with(ref_ds, **kwargs)
+        for ds in ds_list
+    ]
 
-    # Get the first forecast to start building the valid times
-    valid_times_fcst = None
-    valid_times_obs = None
-    first_fcst = True
-    first_obs = True
-    for ds in datasets:
-        if ds.time.is_forecast():
-            if first_fcst:
-                valid_times_fcst = ds.time.add_valid_time()["valid_time"].to_dataset(
-                    name="valid_times"
-                )
-                valid_times_fcst = valid_times_fcst.assign_attrs(ds.attrs)
-                first_fcst = False
-            else:
-                _ds = ds.time.add_valid_time()["valid_time"].to_dataset(
-                    name="valid_times"
-                )
-                _ds = _ds.assign_attrs(ds.attrs)
-                _, valid_times_fcst = _ds.time.align_with(valid_times_fcst)
-        elif ds.time.is_observation():
-            if first_obs:
-                valid_times_obs = ds["valid_time"].to_dataset(name="valid_times")
-                valid_times_obs = valid_times_obs.assign_attrs(ds.attrs)
-                first_obs = False
-            else:
-                _ds = ds["valid_time"].to_dataset(name="valid_times")
-                _ds = _ds.assign_attrs(ds.attrs)
-                _, valid_times_obs = _ds.time.align_with(valid_times_obs)
-
-    if (valid_times_obs is None) and (valid_times_fcst is None):
-        raise ValueError("No observations or forecasts found")
-    elif valid_times_fcst is None:
-        valid_times = valid_times_obs
-    elif valid_times_obs is None:
-        valid_times = valid_times_fcst
-    else:
-        _, valid_times = valid_times_obs.time.align_with(valid_times_fcst)
-
-    datasets = [ds.time.align_with(valid_times)[0] for ds in datasets]
-    if keys is None:
-        return datasets
-    else:
-        return {key: value for (key, value) in zip(keys, datasets)}
+    if keys is not None:
+        return dict(zip(keys, aligned))
+    return aligned[0] if len(aligned) == 1 else aligned

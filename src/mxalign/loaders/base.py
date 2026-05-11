@@ -47,8 +47,8 @@ class BaseLoader(ABC):
         return ds[self.variables]
 
     def _add_grid_mapping(self, ds):
-        ds = ds.space.add_crs(self.grid_mapping)
-        ds = ds.space.add_grid_mapping(self.grid_mapping)
+        ds = ds.mx.add_crs(self.grid_mapping)
+        ds = ds.mx.add_grid_mapping(self.grid_mapping)
         return ds
 
     def _get_properties(self, ds):

@@ -74,7 +74,7 @@ class Runner:
 
         # align in time
         if config_align_time:
-            self.align_time(config_align_time)
+            self.align_time(config_align_time, reference_name=reference)
         else:
             print("Skipping temporal alignment")
 
@@ -148,8 +148,9 @@ class Runner:
             method = config.pop("method")
             save_metrics(method, self.metrics, **config)
 
-    def align_time(self, config):
-        self.datasets = align_time(self.datasets, **config)
+    def align_time(self, config, reference_name=None):
+        config = {k: v for k, v in config.items() if k != "method"}
+        self.datasets = align_time(self.datasets, reference=reference_name, **config)
 
     def align_space(self, reference, config):
         ds_ref = self.datasets[reference]
@@ -160,8 +161,8 @@ class Runner:
 
 
 def get_spatial_alignment(ds, reference):
-    if reference.space.is_point() and ds.space.is_grid():
+    if reference.mx.is_point() and ds.mx.is_grid():
         return "interpolation"
-    if reference.space.is_grid() and ds.space.is_grid():
+    if reference.mx.is_grid() and ds.mx.is_grid():
         return "regrid"
     return "null"

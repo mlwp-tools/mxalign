@@ -17,9 +17,9 @@ class XarrayInterpolator(BaseInterpolator):
             ds_out = self._interpolate_from_latlon(source_dataset)
 
         else:
-            if source_dataset.space.is_stacked():
+            if source_dataset.mx.is_stacked():
                 try:
-                    source_dataset = source_dataset.space.unstack()
+                    source_dataset = source_dataset.mx.unstack()
                 except ValueError:
                     raise ValueError(
                         "Cannot unstack dataset, dataset must be unstacked to use xarray interpolation"

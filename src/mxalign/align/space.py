@@ -10,7 +10,7 @@ def align_space(datasets, reference, **kwargs):
     else:
         keys = None
 
-    datasets = [ds.space.align_with(reference, **kwargs)[0] for ds in datasets]
+    datasets = [ds.mx.align_space_with(reference, **kwargs) for ds in datasets]
 
     if keys is None:
         if len(datasets) == 1:

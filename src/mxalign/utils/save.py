@@ -4,7 +4,7 @@ from earthkit.data.utils.patterns import Pattern
 class DatasetPath:
     def __init__(self, name, ds):
         self.name = name
-        if ds.time.is_forecast():
+        if ds.mx.is_forecast():
             years = ds["reference_time"].groupby(ds["reference_time"].dt.year).count()
             self.year = int(years.isel(year=years.argmax())["year"].values)
             ds_month = ds.sel(reference_time=ds.reference_time.dt.year == self.year)
@@ -23,7 +23,7 @@ class DatasetPath:
                 .count()
             )
             self.day = int(days.isel(day=days.argmax())["day"].values)
-        elif ds.time.is_observation():
+        elif ds.mx.is_observation():
             years = ds["valid_time"].groupby(ds["valid_time"].dt.year).count()
             self.year = int(years.isel(year=years.argmax())["year"].values)
             ds_month = ds.sel(valid_time=ds.valid_time.dt.year == self.year)
