@@ -64,6 +64,6 @@ class IFSForecastLoader(BaseLoader):
             self.uncertainty = Uncertainty.QUANTILE
         else:
             self.uncertainty = Uncertainty.DETERMINISTIC
-        return ds
+        return ds.transpose("reference_time", "lead_time", ...)
 
 
