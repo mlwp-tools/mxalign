@@ -1,15 +1,14 @@
-import numpy as np
 import xarray as xr
 
 from .registry import register_loader
-from ..properties.properties import Properties, Space, Time, Uncertainty
+from ..properties.properties import Space, Time, Uncertainty
 from .base import BaseLoader
 
 
 @register_loader
 class IFSForecastLoader(BaseLoader):
     try:
-        import cfgrib  
+        import cfgrib
     except Exception:
         raise ImportError("Please install the cfgrib package to load IFS-Forecasts")
 
@@ -48,9 +47,10 @@ class IFSForecastLoader(BaseLoader):
         }
 
         if "number" in ds.dims:
-            rename_dims["number"] = "ensemble_member"
+            rename_dims["number"] = "member"
+            self
         if "number" in ds.coords:
-            rename_vars["number"] = "ensemble_member"
+            rename_vars["number"] = "member"
 
         ds = ds.rename_dims({k: v for k, v in rename_dims.items() if k in ds.dims})
         ds = ds.rename_vars({k: v for k, v in rename_vars.items() if k in ds.variables})
@@ -58,11 +58,12 @@ class IFSForecastLoader(BaseLoader):
         if "surface" in ds.variables:
             ds = ds.drop_vars("surface")
 
+        if "member" in ds.dims:
+            self.uncertainty = Uncertainty.ENSEMBLE
+        elif "quantile" in ds.dims:
+            self.uncertainty = Uncertainty.QUANTILE
+        else:
+            self.uncertainty = Uncertainty.DETERMINISTIC
         return ds
 
-    if  "member" in ds.dims:
-        uncertainty = Uncertainty.ENSEMBLE
-    elif "quantile" in ds.dims:
-        uncertainty = Uncertainty.QUANTILE
-    else:
-        uncertainty = Uncertainty.DETERMINISTIC
+
