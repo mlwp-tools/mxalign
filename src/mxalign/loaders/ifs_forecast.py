@@ -58,24 +58,11 @@ class IFSForecastLoader(BaseLoader):
         if "surface" in ds.variables:
             ds = ds.drop_vars("surface")
 
-        if "lead_time" in ds.coords and np.issubdtype(ds["lead_time"].dtype, np.timedelta64):
-            ds = ds.assign_coords(
-                lead_time=(ds["lead_time"].values / np.timedelta64(1, "h")).astype(int)
-            )
-            ds["lead_time"].attrs["units"] = "h"
-
         return ds
 
-    def _get_properties(self, ds):
-        if "member" in ds.dims:
-            uncertainty = Uncertainty.ENSEMBLE
-        elif "quantile" in ds.dims:
-            uncertainty = Uncertainty.QUANTILE
-        else:
-            uncertainty = Uncertainty.DETERMINISTIC
-
-        return Properties(
-            space=Space.GRID,
-            time=Time.FORECAST,
-            uncertainty=uncertainty,
-        )
+    if  "member" in ds.dims:
+        uncertainty = Uncertainty.ENSEMBLE
+    elif "quantile" in ds.dims:
+        uncertainty = Uncertainty.QUANTILE
+    else:
+        uncertainty = Uncertainty.DETERMINISTIC
