@@ -65,5 +65,3 @@ class IFSForecastLoader(BaseLoader):
         else:
             self.uncertainty = Uncertainty.DETERMINISTIC
         return ds.transpose("reference_time", "lead_time", ...)
-
-
