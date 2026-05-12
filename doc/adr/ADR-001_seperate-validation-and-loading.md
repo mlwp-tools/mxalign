@@ -6,7 +6,7 @@ decision-makers: Denby L. Van Ginderachter M.
 informed: Francois B., Buurman S.
 ---
 
-# Seperation of concerns between dataset-loading, -validation and -alignment
+# Separation of concerns between dataset-loading, -validation and -alignment
 
 ## Context
 
@@ -15,10 +15,10 @@ Currently `mxalign` implements dataset loading functionality, validation functio
 <!-- This is an optional element. Feel free to remove. -->
 ## Decision Drivers
 
-* Provide clarity on what the package does by seperating the different concerns
+* Provide clarity on what the package does by separating the different concerns
 * Provide a clear interface for users who want to bring their own dataset
 * Provide flexibility for users
-* Ease of maintainance by decoupling concerns
+* Ease of maintenance by decoupling concerns
 
 ## Considered Options
 
