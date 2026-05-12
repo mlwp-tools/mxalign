@@ -46,11 +46,11 @@ class IFSForecastLoader(BaseLoader):
             "step": "lead_time",
         }
 
-        if "number" in ds.dims:
+        if "number" in ds.dims and "number" in ds.coords:
             rename_dims["number"] = "member"
-            self
-        if "number" in ds.coords:
             rename_vars["number"] = "member"
+        else:
+            ds = ds.drop_vars("number")
 
         ds = ds.rename_dims({k: v for k, v in rename_dims.items() if k in ds.dims})
         ds = ds.rename_vars({k: v for k, v in rename_vars.items() if k in ds.variables})
