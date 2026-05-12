@@ -10,7 +10,7 @@ informed: Francois B., Buurman S.
 
 ## Context
 
-Currently `mxalign` implements dataset loading functionality, validation functionality (checking if the loaded dataset has all the correct metadata and) and alignment functionality. However, dataset-loading and -validation fall outside the main scope of the `mxalign` package. 
+Currently `mxalign` implements dataset loading functionality, validation functionality (checking if the loaded dataset has all the correct metadata and) and alignment functionality. However, dataset-loading and -validation fall outside the main scope of the `mxalign` package.
 
 <!-- This is an optional element. Feel free to remove. -->
 ## Decision Drivers
@@ -27,7 +27,7 @@ Currently `mxalign` implements dataset loading functionality, validation functio
 
 ## Decision Outcome
 
-Chosen option 1., because it allows for most flexibility and provides a clear entry point for users who want to bring their own loader. 
+Chosen option 1., because it allows for most flexibility and provides a clear entry point for users who want to bring their own loader.
 
 <!-- This is an optional element. Feel free to remove. -->
 ### Consequences
@@ -36,4 +36,4 @@ Chosen option 1., because it allows for most flexibility and provides a clear en
 * `mxalign` is now only responsible for the alignment tasks
 
 ## More Information
-Currently the interface between dataset loaded with an `mlwp-data-loaders` loader and `mxalign` is not defined. Ideally `mxalign` should know the traits of the dataset to correctly align dataset. How do we inform `mxalign` on the traits? See [ADR-002](./ADR-002_mxalign-loader-interface.md) for possible options. 
+Currently the interface between dataset loaded with an `mlwp-data-loaders` loader and `mxalign` is not defined. Ideally `mxalign` should know the traits of the dataset to correctly align dataset. How do we inform `mxalign` on the traits? See [ADR-002](./ADR-002_mxalign-loader-interface.md) for possible options.
