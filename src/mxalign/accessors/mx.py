@@ -1,5 +1,4 @@
 import numpy as np
-import pandas as pd
 import xarray as xr
 import cartopy.crs as ccrs
 
@@ -8,8 +7,8 @@ from mlwp_data_specs.specs.traits.spatial_coordinate import Space
 from mlwp_data_specs.specs.traits.time_coordinate import Time
 
 from ..utils.projections import create_cartopy_crs, BUILTIN
-
-COORD_TOLERANCE = 0.0001
+from . import time as _time
+from . import space as _space
 
 
 @xr.register_dataset_accessor("mx")
@@ -167,13 +166,7 @@ class MxAccessor:
 
     def add_valid_time(self):
         if self.is_forecast():
-            valid_time = (
-                self._ds["reference_time"].values[:, np.newaxis]
-                + self._ds["lead_time"].values
-            )
-            return self._ds.assign_coords(
-                {"valid_time": (["reference_time", "lead_time"], valid_time)}
-            )
+            return _time._add_valid_time(self._ds)
         return self._ds
 
     # --- Alignment ---
@@ -196,158 +189,43 @@ class MxAccessor:
             Ignored for observation→* cases.
         """
         if self.is_forecast() and ds2.mx.is_observation():
-            return _align_forecast_to_observation(self._ds, ds2, lead_time=lead_time)
+            return _time.align_forecast_to_observation(self._ds, ds2, lead_time=lead_time)
         elif self.is_observation() and ds2.mx.is_forecast():
-            return _align_observation_to_forecast(self._ds, ds2)
+            return _time.align_observation_to_forecast(self._ds, ds2)
         elif self.is_observation() and ds2.mx.is_observation():
-            return _align_observation_to_observation(self._ds, ds2)
+            return _time.align_observation_to_observation(self._ds, ds2)
         elif self.is_forecast() and ds2.mx.is_forecast():
             ff_lead_time = (
-                lead_time
-                if lead_time in ("reference", "intersection", "union")
-                else "reference"
+                lead_time if lead_time in ("reference", "intersection", "union") else "reference"
             )
-            return _align_forecast_to_forecast(self._ds, ds2, lead_time=ff_lead_time)
+            return _time.align_forecast_to_forecast(self._ds, ds2, lead_time=ff_lead_time)
         else:
             raise ValueError("Cannot align datasets with unknown time properties")
 
     def align_space_with(self, ds2, **kwargs):
-        """Align this dataset's spatial grid to match ds2."""
+        """Align this dataset's spatial grid to match ds2.
+
+        Always uses "reference" semantics: self is interpolated or reindexed to
+        ds2's spatial coordinates. ds2 is never modified.
+
+        Parameters
+        ----------
+        ds2 : xr.Dataset
+            The reference dataset to align to.
+        method : str
+            Interpolation method for grid→point alignment. One of "xarray" or
+            "delaunay" (default "xarray"). Ignored for grid→grid.
+        **kwargs
+            Passed through to the interpolator.
+        """
         if self.is_grid():
             if ds2.mx.is_grid():
-                return _align_grid_grid(self._ds, ds2, **kwargs)
+                return _space.align_grid_grid(self._ds, ds2, **kwargs)
             elif ds2.mx.is_point():
-                return _align_grid_point(self._ds, ds2, **kwargs)
+                return _space.align_grid_point(self._ds, ds2, **kwargs)
         elif self.is_point():
             if ds2.mx.is_point():
                 raise NotImplementedError("Point-to-point alignment not implemented")
             elif ds2.mx.is_grid():
                 raise NotImplementedError("Point-to-grid alignment not implemented")
         raise ValueError("Datasets do not have compatible spatial properties")
-
-
-# ---------------------------------------------------------------------------
-# Temporal alignment helpers
-# ---------------------------------------------------------------------------
-
-
-def _add_valid_time(ds_fcst):
-    valid_time = (
-        ds_fcst["reference_time"].values[:, np.newaxis] + ds_fcst["lead_time"].values
-    )
-    return ds_fcst.assign_coords(
-        {"valid_time": (["reference_time", "lead_time"], valid_time)}
-    )
-
-
-def _align_forecast_to_observation(ds_fcst, ds_obs, lead_time="shortest"):
-    ds_with_vt = _add_valid_time(ds_fcst)
-    ds_stacked = ds_with_vt.stack(time=["reference_time", "lead_time"]).reset_index(
-        "time"
-    )
-
-    vt_vals = ds_stacked.valid_time.values
-    lt_vals = ds_stacked.lead_time.values
-
-    if lead_time in ("shortest", "longest"):
-        df = pd.DataFrame({"vt": vt_vals, "lt": lt_vals})
-        agg = "min" if lead_time == "shortest" else "max"
-        is_extreme = (df.groupby("vt")["lt"].transform(agg) == df["lt"]).values
-        # Among entries that match the extreme lead_time, keep first per valid_time
-        # (handles ties: same vt + same extreme lt appearing via different ref_times)
-        extreme_positions = np.where(is_extreme)[0]
-        _, first_in_group = np.unique(vt_vals[extreme_positions], return_index=True)
-        positions = extreme_positions[first_in_group]
-    elif isinstance(lead_time, (list, np.ndarray)):
-        lt_set = set(np.asarray(lead_time).tolist())
-        seen_vt = set()
-        positions = []
-        for i, (vt, lt) in enumerate(zip(vt_vals, lt_vals)):
-            if lt in lt_set and vt not in seen_vt:
-                positions.append(i)
-                seen_vt.add(vt)
-        positions = np.array(positions)
-    else:
-        # single lead_time value — filter directly
-        positions = np.where(lt_vals == lead_time)[0]
-
-    ds_1d = ds_stacked.isel(time=positions)
-    ds_1d = ds_1d.swap_dims({"time": "valid_time"})
-    ds_1d = ds_1d.drop_vars(
-        [v for v in ["reference_time", "lead_time", "time"] if v in ds_1d.coords]
-    )
-    ds_1d = ds_1d.transpose("valid_time", ...)
-
-    ds_1d = ds_1d.reindex(valid_time=ds_obs.valid_time)
-    ds_1d.attrs[TIME_TRAIT_ATTR] = Time.OBSERVATION.value
-    return ds_1d
-
-
-def _align_observation_to_forecast(ds_obs, ds_fcst):
-    ds_fcst_with_vt = _add_valid_time(ds_fcst)
-    valid_time_2d = ds_fcst_with_vt["valid_time"]  # shape (reference_time, lead_time)
-
-    # Reindex obs onto all unique fcst valid_times (NaN-fills fcst valid_times not in obs)
-    fcst_vt_flat = np.unique(valid_time_2d.values.ravel())
-    obs_reindexed = ds_obs.reindex(valid_time=fcst_vt_flat)
-
-    # sel with a 2D DataArray indexer broadcasts 1D obs → (reference_time, lead_time)
-    ds_out = obs_reindexed.sel(valid_time=valid_time_2d)
-
-    ds_out.attrs[TIME_TRAIT_ATTR] = Time.FORECAST.value
-    return ds_out
-
-
-def _align_observation_to_observation(ds1, ds2):
-    return ds1.reindex(valid_time=ds2.valid_time)
-
-
-def _align_forecast_to_forecast(ds1, ds2, lead_time="reference"):
-    ds_out = ds1.reindex(reference_time=ds2.reference_time)
-
-    # Align lead_time
-    if lead_time == "reference":
-        ds_out = ds_out.reindex(lead_time=ds2.lead_time)
-    elif lead_time == "intersection":
-        common_lt = np.intersect1d(ds_out.lead_time.values, ds2.lead_time.values)
-        ds_out = ds_out.sel(lead_time=common_lt)
-    elif lead_time == "union":
-        all_lt = np.union1d(ds_out.lead_time.values, ds2.lead_time.values)
-        ds_out = ds_out.reindex(lead_time=all_lt)
-    else:
-        raise ValueError(f"Unknown lead_time option for F→F alignment: {lead_time!r}")
-
-    # Refresh valid_time
-    if "valid_time" in ds_out.coords:
-        ds_out = ds_out.drop_vars("valid_time")
-    return _add_valid_time(ds_out)
-
-
-# ---------------------------------------------------------------------------
-# Spatial alignment helpers
-# ---------------------------------------------------------------------------
-
-
-def _align_grid_grid(ds1, ds2, **kwargs):
-    if np.array_equal(
-        ds1["longitude"].values, ds2["longitude"].values
-    ) and np.array_equal(ds1["latitude"].values, ds2["latitude"].values):
-        return ds1
-    elif np.allclose(
-        ds1["longitude"].values, ds2["longitude"].values, atol=COORD_TOLERANCE
-    ) and np.allclose(
-        ds1["latitude"].values, ds2["latitude"].values, atol=COORD_TOLERANCE
-    ):
-        print(
-            f"Some lat-lon coordinates differ but within {COORD_TOLERANCE}°, treating as equal"
-        )
-        return ds1
-    else:
-        raise NotImplementedError("Regridding not implemented")
-
-
-def _align_grid_point(ds1, ds2, **kwargs):
-    from ..interpolations.interpolate import interpolate
-
-    method = kwargs.pop("method", "xarray")
-    return interpolate(ds1, ds2, method, **kwargs)
