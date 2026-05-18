@@ -18,9 +18,7 @@ LEAD_TIMES = np.array([np.timedelta64(h, "h") for h in [0, 6, 12, 18]])
 # Row 0 (ref=T0):        0,  1,  2,  3
 # Row 1 (ref=T0+6h):    10, 11, 12, 13
 # Row 2 (ref=T0+12h):   20, 21, 22, 23
-FORECAST_VALUES = np.array(
-    [[float(i * 10 + j) for j in range(4)] for i in range(3)]
-)
+FORECAST_VALUES = np.array([[float(i * 10 + j) for j in range(4)] for i in range(3)])
 
 # Observation covers T0-6h … T0+24h (7 steps)
 OBS_TIMES = np.array([T0 + i * H6 for i in range(-1, 5)])  # T0-6h … T0+24h
@@ -28,7 +26,11 @@ OBS_VALUES = np.arange(len(OBS_TIMES), dtype=float) * 10.0  # 0, 10, 20, 30, 40,
 
 
 def _props(time: str) -> dict:
-    return {"properties": {"space": "point", "time": time, "uncertainty": "deterministic"}}
+    return {
+        "mlwp_time_trait": time,
+        "mlwp_space_trait": "point",
+        "mlwp_uncertainty_trait": "deterministic",
+    }
 
 
 @pytest.fixture

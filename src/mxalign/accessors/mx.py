@@ -3,8 +3,10 @@ import pandas as pd
 import xarray as xr
 import cartopy.crs as ccrs
 
-from ..properties.properties import Space, Time
-from ..properties.utils import properties_from_attrs, update_space_property, update_time_property
+from mlwp_data_specs.api import SPACE_TRAIT_ATTR, TIME_TRAIT_ATTR
+from mlwp_data_specs.specs.traits.spatial_coordinate import Space
+from mlwp_data_specs.specs.traits.time_coordinate import Time
+
 from ..utils.projections import create_cartopy_crs, BUILTIN
 
 COORD_TOLERANCE = 0.0001
@@ -13,9 +15,8 @@ COORD_TOLERANCE = 0.0001
 @xr.register_dataset_accessor("mx")
 class MxAccessor:
     def __init__(self, ds):
-        props = properties_from_attrs(ds)
-        self._space = props.space
-        self._time = props.time
+        self._space = Space(ds.attrs[SPACE_TRAIT_ATTR])
+        self._time = Time(ds.attrs[TIME_TRAIT_ATTR])
         self._ds = ds
 
     # --- Space predicates ---
@@ -201,7 +202,11 @@ class MxAccessor:
         elif self.is_observation() and ds2.mx.is_observation():
             return _align_observation_to_observation(self._ds, ds2)
         elif self.is_forecast() and ds2.mx.is_forecast():
-            ff_lead_time = lead_time if lead_time in ("reference", "intersection", "union") else "reference"
+            ff_lead_time = (
+                lead_time
+                if lead_time in ("reference", "intersection", "union")
+                else "reference"
+            )
             return _align_forecast_to_forecast(self._ds, ds2, lead_time=ff_lead_time)
         else:
             raise ValueError("Cannot align datasets with unknown time properties")
@@ -225,10 +230,10 @@ class MxAccessor:
 # Temporal alignment helpers
 # ---------------------------------------------------------------------------
 
+
 def _add_valid_time(ds_fcst):
     valid_time = (
-        ds_fcst["reference_time"].values[:, np.newaxis]
-        + ds_fcst["lead_time"].values
+        ds_fcst["reference_time"].values[:, np.newaxis] + ds_fcst["lead_time"].values
     )
     return ds_fcst.assign_coords(
         {"valid_time": (["reference_time", "lead_time"], valid_time)}
@@ -237,7 +242,9 @@ def _add_valid_time(ds_fcst):
 
 def _align_forecast_to_observation(ds_fcst, ds_obs, lead_time="shortest"):
     ds_with_vt = _add_valid_time(ds_fcst)
-    ds_stacked = ds_with_vt.stack(time=["reference_time", "lead_time"]).reset_index("time")
+    ds_stacked = ds_with_vt.stack(time=["reference_time", "lead_time"]).reset_index(
+        "time"
+    )
 
     vt_vals = ds_stacked.valid_time.values
     lt_vals = ds_stacked.lead_time.values
@@ -272,7 +279,8 @@ def _align_forecast_to_observation(ds_fcst, ds_obs, lead_time="shortest"):
     ds_1d = ds_1d.transpose("valid_time", ...)
 
     ds_1d = ds_1d.reindex(valid_time=ds_obs.valid_time)
-    return update_time_property(ds_1d, Time.OBSERVATION)
+    ds_1d.attrs[TIME_TRAIT_ATTR] = Time.OBSERVATION.value
+    return ds_1d
 
 
 def _align_observation_to_forecast(ds_obs, ds_fcst):
@@ -286,7 +294,8 @@ def _align_observation_to_forecast(ds_obs, ds_fcst):
     # sel with a 2D DataArray indexer broadcasts 1D obs → (reference_time, lead_time)
     ds_out = obs_reindexed.sel(valid_time=valid_time_2d)
 
-    return update_time_property(ds_out, Time.FORECAST)
+    ds_out.attrs[TIME_TRAIT_ATTR] = Time.FORECAST.value
+    return ds_out
 
 
 def _align_observation_to_observation(ds1, ds2):
@@ -317,6 +326,7 @@ def _align_forecast_to_forecast(ds1, ds2, lead_time="reference"):
 # ---------------------------------------------------------------------------
 # Spatial alignment helpers
 # ---------------------------------------------------------------------------
+
 
 def _align_grid_grid(ds1, ds2, **kwargs):
     if np.array_equal(
