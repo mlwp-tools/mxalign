@@ -46,11 +46,10 @@ class XarrayInterpolator(BaseInterpolator):
         y = xr.DataArray(xyz[:, 1], dims="point_index")
 
         ds_out = source_dataset.interp(xc=x, yc=y, **self.options)
-        # ).assing_coords(
-        #     longitude=self.target_dataset["longitude"],
-        #     latitude=self.target_dataset["latitude"]
-        # )
-
+        ds_out = ds_out.assign_coords(
+            longitude=("point_index", self.target_dataset["longitude"].values),
+            latitude=("point_index", self.target_dataset["latitude"].values),
+        )
         return ds_out
 
     def _interpolate_from_latlon(self, source_dataset):
