@@ -9,7 +9,13 @@ from scipy.sparse import csr_matrix
 
 from .base import BaseInterpolator
 from .registry import register_interpolator
-from ..properties.properties import Space
+
+from mlwp_data_specs.specs.traits.spatial_coordinate import Space
+from mlwp_data_specs.api import (
+    TIME_TRAIT_ATTR,
+    SPACE_TRAIT_ATTR,
+    UNCERTAINTY_TRAIT_ATTR,
+)
 
 
 @register_interpolator
@@ -81,7 +87,13 @@ class DelaunayInterpolator(BaseInterpolator):
             latitude=self.target_dataset["latitude"],
             longitude=self.target_dataset["longitude"],
         )
-        ds_out.attrs["properties"] = source_dataset.attrs["properties"]
+
+        ds_out.attrs.update(
+            {
+                k: source_dataset.attrs[k]
+                for k in [TIME_TRAIT_ATTR, SPACE_TRAIT_ATTR, UNCERTAINTY_TRAIT_ATTR]
+            }
+        )
         return ds_out
 
 

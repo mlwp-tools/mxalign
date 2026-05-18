@@ -1,6 +1,6 @@
 import xarray as xr
-from ..properties.properties import Space
-from ..properties.utils import update_space_property
+from mlwp_data_specs.specs.traits.spatial_coordinate import Space
+from ..utils.traits import update_space_trait
 
 
 class BaseInterpolator:
@@ -21,7 +21,7 @@ class BaseInterpolator:
         self, source_dataset: xr.Dataset | xr.DataArray
     ) -> xr.Dataset | xr.DataArray:
         ds_out = self._interpolate(source_dataset)
-        return update_space_property(ds_out, self.target_space)
+        return update_space_trait(ds_out, self.target_space)
 
     def _interpolate(
         self, source_dataset: xr.Dataset | xr.DataArray
