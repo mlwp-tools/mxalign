@@ -20,9 +20,9 @@ class TestPropertiesAttrs(unittest.TestCase):
         ds = set_properties_attrs(ds, props)
 
         self.assertNotIn("properties", ds.attrs)
-        self.assertEqual(ds.attrs["properties_space"], "point")
-        self.assertEqual(ds.attrs["properties_time"], "observation")
-        self.assertEqual(ds.attrs["properties_uncertainty"], "deterministic")
+        self.assertEqual(ds.attrs["properties.space"], "point")
+        self.assertEqual(ds.attrs["properties.time"], "observation")
+        self.assertEqual(ds.attrs["properties.uncertainty"], "deterministic")
 
         with tempfile.NamedTemporaryFile(suffix=".nc") as tmp:
             ds.to_netcdf(tmp.name)
@@ -36,6 +36,20 @@ class TestPropertiesAttrs(unittest.TestCase):
             "time": "observation",
             "uncertainty": "deterministic",
         }
+        self.assertEqual(
+            properties_from_attrs(ds),
+            Properties(
+                space=Space.POINT,
+                time=Time.OBSERVATION,
+                uncertainty=Uncertainty.DETERMINISTIC,
+            ),
+        )
+
+    def test_properties_can_still_be_read_from_legacy_flat_underscore_keys(self):
+        ds = xr.Dataset()
+        ds.attrs["properties_space"] = "point"
+        ds.attrs["properties_time"] = "observation"
+        ds.attrs["properties_uncertainty"] = "deterministic"
         self.assertEqual(
             properties_from_attrs(ds),
             Properties(
