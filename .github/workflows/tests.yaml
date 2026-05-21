@@ -19,6 +19,6 @@ jobs:
       with:
         python-version: "3.12"
     - name: Install dependencies
-      run: uv sync --frozen
+      run: uv sync --frozen --all-extras
     - name: Run tests
       run: uv run python -m unittest discover -s tests -v

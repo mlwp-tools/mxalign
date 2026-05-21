@@ -1251,6 +1251,9 @@ dependencies = [
 earthkit = [
     { name = "earthkit-meteo" },
 ]
+ifs = [
+    { name = "cfgrib" },
+]
 jobqueue = [
     { name = "dask-jobqueue" },
 ]
@@ -1267,6 +1270,7 @@ dev = [
 requires-dist = [
     { name = "bokeh", specifier = ">=3.8.2" },
     { name = "cartopy", specifier = ">=0.25.0" },
+    { name = "cfgrib", marker = "extra == 'ifs'", specifier = ">=0.9.15.1" },
     { name = "dask", specifier = ">=2026.1.2" },
     { name = "dask-jobqueue", marker = "extra == 'jobqueue'", specifier = ">=0.9.0" },
     { name = "distributed", specifier = ">=2026.1.2" },
@@ -1281,7 +1285,7 @@ requires-dist = [
     { name = "xskillscore", marker = "extra == 'verification'", specifier = ">=0.0.29" },
     { name = "zarr", specifier = "<3.0" },
 ]
-provides-extras = ["earthkit", "verification", "jobqueue"]
+provides-extras = ["earthkit", "ifs", "verification", "jobqueue"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "ipykernel", specifier = ">=7.2.0" }]

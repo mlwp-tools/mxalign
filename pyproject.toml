@@ -29,6 +29,9 @@ mxalign = "mxalign.cli:main"
 earthkit = [
     "earthkit-meteo>=0.6.1",
 ]
+ifs = [
+    "cfgrib>=0.9.15.1",
+]
 verification = [
     "xskillscore>=0.0.29",
 ]
