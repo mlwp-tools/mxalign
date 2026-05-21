@@ -10,6 +10,7 @@ from scipy.sparse import csr_matrix
 from .base import BaseInterpolator
 from .registry import register_interpolator
 from ..properties.properties import Space
+from ..properties.utils import properties_from_attrs, set_properties_attrs
 
 
 @register_interpolator
@@ -81,8 +82,7 @@ class DelaunayInterpolator(BaseInterpolator):
             latitude=self.target_dataset["latitude"],
             longitude=self.target_dataset["longitude"],
         )
-        ds_out.attrs["properties"] = source_dataset.attrs["properties"]
-        return ds_out
+        return set_properties_attrs(ds_out, properties_from_attrs(source_dataset))
 
 
 def _build_weight_matrix(
