@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Store dataset properties as netCDF-safe scalar attrs (`properties.space`, `properties.time`, `properties.uncertainty`) while keeping read compatibility with legacy `attrs["properties"]` dict/JSON data.
-- Added CI test workflow using `uv` and the frozen `uv.lock`, installing all optional extras before running unit tests.
-- Added optional `ifs` dependency group with `cfgrib`, `eccodes`, and `eccodeslib`.
+- Store dataset properties as netCDF-safe individual attributes while keeping read compatibility with legacy `attrs["properties"]` dict/JSON data. [\#21](https://github.com/mlwp-tools/mxalign/pull/21) @observingClouds
+- Added CI test workflow with first unit tests. [\#21](https://github.com/mlwp-tools/mxalign/pull/21) @observingClouds
+- Added optional `ifs` dependency group with `cfgrib`, `eccodes`, and `eccodeslib`. [\#21](https://github.com/mlwp-tools/mxalign/pull/21) @observingClouds
 
 ## [0.1.0](https://github.com/mlwp-tools/mxalign/releases/tag/v0.1.0)
 
