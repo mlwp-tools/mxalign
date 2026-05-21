@@ -45,20 +45,6 @@ class TestPropertiesAttrs(unittest.TestCase):
             ),
         )
 
-    def test_properties_can_still_be_read_from_legacy_flat_underscore_keys(self):
-        ds = xr.Dataset()
-        ds.attrs["properties_space"] = "point"
-        ds.attrs["properties_time"] = "observation"
-        ds.attrs["properties_uncertainty"] = "deterministic"
-        self.assertEqual(
-            properties_from_attrs(ds),
-            Properties(
-                space=Space.POINT,
-                time=Time.OBSERVATION,
-                uncertainty=Uncertainty.DETERMINISTIC,
-            ),
-        )
-
     def test_properties_can_be_read_from_legacy_json_string(self):
         ds = xr.Dataset()
         ds.attrs["properties"] = json.dumps(

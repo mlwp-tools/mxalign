@@ -6,10 +6,6 @@ from .validation import validate_time_dataset, validate_space_dataset
 SPACE_ATTR = "properties.space"
 TIME_ATTR = "properties.time"
 UNCERTAINTY_ATTR = "properties.uncertainty"
-LEGACY_SPACE_ATTR = "properties_space"
-LEGACY_TIME_ATTR = "properties_time"
-LEGACY_UNCERTAINTY_ATTR = "properties_uncertainty"
-
 
 def properties_to_attrs(prop: Properties) -> dict:
     return {
@@ -30,14 +26,9 @@ def properties_from_attrs(ds) -> Properties:
     if not isinstance(old_attrs, dict):
         old_attrs = {}
 
-    space = attrs.get(
-        SPACE_ATTR, attrs.get(LEGACY_SPACE_ATTR, old_attrs.get("space"))
-    )
-    time = attrs.get(TIME_ATTR, attrs.get(LEGACY_TIME_ATTR, old_attrs.get("time")))
-    uncertainty = attrs.get(
-        UNCERTAINTY_ATTR,
-        attrs.get(LEGACY_UNCERTAINTY_ATTR, old_attrs.get("uncertainty")),
-    )
+    space = attrs.get(SPACE_ATTR, old_attrs.get("space"))
+    time = attrs.get(TIME_ATTR, old_attrs.get("time"))
+    uncertainty = attrs.get(UNCERTAINTY_ATTR, old_attrs.get("uncertainty"))
 
     return Properties(
         space=Space(space),
