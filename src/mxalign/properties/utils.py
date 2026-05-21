@@ -7,6 +7,7 @@ SPACE_ATTR = "properties.space"
 TIME_ATTR = "properties.time"
 UNCERTAINTY_ATTR = "properties.uncertainty"
 
+
 def properties_to_attrs(prop: Properties) -> dict:
     return {
         SPACE_ATTR: prop.space.value,
