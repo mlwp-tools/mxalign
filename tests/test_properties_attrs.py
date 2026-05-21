@@ -26,8 +26,8 @@ class TestPropertiesAttrs(unittest.TestCase):
 
         with tempfile.NamedTemporaryFile(suffix=".nc") as tmp:
             ds.to_netcdf(tmp.name)
-            ds_loaded = xr.open_dataset(tmp.name)
-            self.assertEqual(properties_from_attrs(ds_loaded), props)
+            with xr.open_dataset(tmp.name) as ds_loaded:
+                self.assertEqual(properties_from_attrs(ds_loaded), props)
 
     def test_properties_can_still_be_read_from_legacy_format(self):
         ds = xr.Dataset()
