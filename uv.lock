@@ -1253,6 +1253,7 @@ earthkit = [
 ]
 ifs = [
     { name = "cfgrib" },
+    { name = "eccodes" },
 ]
 jobqueue = [
     { name = "dask-jobqueue" },
@@ -1276,6 +1277,7 @@ requires-dist = [
     { name = "distributed", specifier = ">=2026.1.2" },
     { name = "earthkit-data", specifier = ">=0.19.0" },
     { name = "earthkit-meteo", marker = "extra == 'earthkit'", specifier = ">=0.6.1" },
+    { name = "eccodes", marker = "extra == 'ifs'", specifier = ">=2.45.0" },
     { name = "h5netcdf", specifier = ">=1.8.1" },
     { name = "h5py", specifier = ">=3.15.1" },
     { name = "netcdf4", specifier = ">=1.7.4" },

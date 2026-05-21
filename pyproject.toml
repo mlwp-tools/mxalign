@@ -31,6 +31,7 @@ earthkit = [
 ]
 ifs = [
     "cfgrib>=0.9.15.1",
+    "eccodes>=2.45.0",
 ]
 verification = [
     "xskillscore>=0.0.29",
