@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from .registry import register_loader
 from ..properties.properties import Properties, Space, Time, Uncertainty
 from ..properties.validation import validate_dataset
-from ..properties.utils import properties_to_attrs
+from ..properties.utils import set_properties_attrs
 
 
 class BaseLoader(ABC):
@@ -29,7 +29,7 @@ class BaseLoader(ABC):
         properties = self._get_properties(ds)
         validate_dataset(ds, properties)
 
-        ds.attrs["properties"] = properties_to_attrs(properties)
+        ds = set_properties_attrs(ds, properties)
 
         if self.grid_mapping:
             ds = self._add_grid_mapping(ds)
