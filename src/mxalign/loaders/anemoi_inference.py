@@ -125,7 +125,7 @@ class AnemoiInferenceLoader(BaseLoader):
         for batch in batches:
             member_datasets = []
             for member_idx, filepath in enumerate(batch):
-                ds = xr.open_dataset(filepath, engine=engine)
+                ds = xr.open_dataset(filepath, engine=engine, chunks={})
                 ds = _preprocess_with_member(ds, member_idx)
                 member_datasets.append(ds)
             ref_datasets.append(xr.concat(member_datasets, dim="member"))

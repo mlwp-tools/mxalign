@@ -3,30 +3,42 @@ from earthkit.data.utils.patterns import Pattern
 
 
 class Dates:
-    def __init__(self, start: str | np.datetime64, end: str | np.datetime64, period: str | np.timedelta64, range: str | np.timedelta64, step: str | np.timedelta64, ens_size: int = 1):
+    def __init__(self, start: str | np.datetime64, end: str | np.datetime64, period: str | np.timedelta64,
+                 range: str | np.timedelta64 = None, step: str | np.timedelta64 = None,
+                 steps: list = None, ens_size: int = 1):
+        if steps is None and (range is None or step is None):
+            raise ValueError("Either 'steps' or both 'range' and 'step' must be provided.")
         self._start = np.datetime64(start) if not isinstance(start, np.datetime64) else start
         self._end = np.datetime64(end) if not isinstance(end, np.datetime64) else end
         self._period = to_timedelta64(period) if isinstance(period, str) else period
-        self._range = to_timedelta64(range) if isinstance(range, str) else range
-        self._step = to_timedelta64(step) if isinstance(step, str) else step
         self.ens_size = ens_size
+
+        if steps is not None:
+            lead_time_deltas = [to_timedelta64(s) if isinstance(s, str) else s for s in steps]
+        else:
+            self._range = to_timedelta64(range) if isinstance(range, str) else range
+            self._step  = to_timedelta64(step)  if isinstance(step,  str) else step
+            lead_time_deltas = []
+            delta = np.timedelta64(0, "s")
+            while delta <= self._range:
+                lead_time_deltas.append(delta)
+                delta += self._step
+
         valid_times = set()
         lead_times = set()
         reference_times = set()
         date = self._start
         while date <= self._end:
-            #print(date)
             reference_times.add(date)
-            delta = np.timedelta64(0,"s")
-            while delta <= self._range:
+            for delta in lead_time_deltas:
                 valid_times.add(date + delta)
                 lead_times.add(delta)
-                delta += self._step
             date += self._period
         self.valid_times = list(valid_times)
         self.reference_times = list(reference_times)
-        # FIXME: can we simplify this? earthkit.data.utils.patterns.Pattern does not accept np.int64
-        self.lead_times = sorted([int(t.astype(int)) for t in lead_times])
+        # Stored as nanoseconds (int64) so _filter_by_dates can reconstruct timedelta64[ns]
+        # without ambiguity — raw .astype(int) would depend on the timedelta unit ("h", "s", …).
+        self.lead_times = sorted([int(t.astype("timedelta64[ns]").astype(int)) for t in lead_times])
 
     def substitute(self, path: str):
         print(f"Substituting path: {path}")

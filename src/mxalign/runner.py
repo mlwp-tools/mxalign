@@ -135,6 +135,11 @@ class Runner():
     
     def verify(self):
         config = self.config["verification"]
+        # Materialise aligned datasets in distributed memory before building the
+        # metric graph.  Without this, the CRPS graph embeds the full I/O task
+        # graph for all source files, making the serialised graph 100+ GiB.
+        for name, ds in self.datasets.items():
+            self.datasets[name] = ds.persist()
         reference = self.datasets[config["reference"]]
         config_metrics = config.get("metrics", None)
         config_save_metrics = config.get("save", None)
@@ -208,7 +213,7 @@ def _filter_by_dates(ds, dates):
         ds = ds.sel(reference_time=ref_times)
         if "lead_time" in ds.dims:
             lead_times = np.array(
-                [np.timedelta64(lt, "s") for lt in dates.lead_times], dtype="timedelta64[ns]"
+                [np.timedelta64(lt, "ns") for lt in dates.lead_times], dtype="timedelta64[ns]"
             )
             lead_times = lead_times[np.isin(lead_times, ds["lead_time"].values)]
             ds = ds.sel(lead_time=lead_times)
