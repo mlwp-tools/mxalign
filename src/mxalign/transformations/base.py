@@ -33,6 +33,9 @@ def transform_kelvin_to_celcius(ds, variables, inverse=False):
 def transform(ds, u, v, speed):
     import numpy as np
 
-    result = np.sqrt(ds[u] ** 2 + ds[v] ** 2)
-    ds[speed] = result
+    us = [u] if isinstance(u, str) else u
+    vs = [v] if isinstance(v, str) else v
+    speeds = [speed] if isinstance(speed, str) else speed
+    for u_var, v_var, s_var in zip(us, vs, speeds):
+        ds[s_var] = np.sqrt(ds[u_var] ** 2 + ds[v_var] ** 2)
     return ds
