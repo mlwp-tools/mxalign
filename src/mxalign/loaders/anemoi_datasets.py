@@ -53,6 +53,26 @@ class AnemoiDatasetsLoader(BaseLoader):
                 )
         return ds_selected.to_dataset(dim="variable")
 
+    def fast_slice_recipe(self):
+        """Recipe for per-rt direct zarr region read (fused engine).
+
+        Only the single-file zarr path is supported in v1. The leaf
+        computes valid_times = rt + lead_times and uses zarr's vectorised
+        indexing to fetch one slice; no xarray/dask lazy graph involved.
+        """
+        if isinstance(self.files, list):
+            if len(self.files) != 1:
+                return None
+            path = self.files[0]
+        else:
+            path = self.files
+        return {
+            "kind": "anemoi-datasets-zarr",
+            "path": path,
+            "consolidated": False,
+            "drop_vars": list(DROP_VARS),
+        }
+
 
 def _postprocess(dataset: xr.Dataset) -> xr.Dataset:
     """Post-process the dataset to add coordinates and drop unused variables.

@@ -110,6 +110,14 @@ class BaseLoader(ABC):
         )
         return properties
 
+    def fast_slice_recipe(self):
+        """Return a small picklable dict the fused verification engine can use
+        to load one reference_time slice directly from the underlying store,
+        bypassing the lazy xarray/dask graphs. Return None to opt out
+        (the fused engine will reject this loader for the dataset).
+        """
+        return None
+
 
 @register_loader
 class MxAlignLoader(BaseLoader):

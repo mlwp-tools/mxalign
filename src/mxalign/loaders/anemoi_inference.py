@@ -69,6 +69,43 @@ class AnemoiInferenceLoader(BaseLoader):
         return ds
 
 
+    def fast_slice_recipe(self):
+        """Per-reference_time loading recipe for the fused engine.
+
+        Maps each reference_time (np.datetime64[ns]) to the .nc file path
+        containing that forecast.  Only the per-file netCDF path is
+        supported (single-zarr forecasts return None).
+        """
+        files = [self.files] if isinstance(self.files, str) else list(self.files)
+        if not files:
+            return None
+        if Path(files[0]).suffix.lower() == ".zarr":
+            return None
+
+        engine = self.kwargs.get("engine", DEFAULTS_NETCDF["engine"])
+
+        if self.reference_times is not None and len(self.reference_times) == len(files):
+            rt_values = [np.datetime64(rt, "ns") for rt in self.reference_times]
+        else:
+            rt_values = []
+            for f in files:
+                try:
+                    rt_values.append(
+                        np.datetime64(
+                            datetime.strptime(Path(f).stem, "%Y-%m-%dT%H"), "ns"
+                        )
+                    )
+                except ValueError:
+                    return None
+
+        files_by_rt = {int(rt.astype("int64")): f for rt, f in zip(rt_values, files)}
+        return {
+            "kind": "anemoi-inference-nc",
+            "files_by_rt": files_by_rt,
+            "engine": engine,
+        }
+
+
 def _load_nc_vars(path, var_names, engine):
     """Load all named variables from one NC file.
 
