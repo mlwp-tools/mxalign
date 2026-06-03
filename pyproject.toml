@@ -15,7 +15,7 @@ dependencies = [
     "h5py>=3.15.1",
     "netcdf4>=1.7.4",
     "pyyaml>=6.0.3",
-    "scipy>=1.17.0",
+    "scipy>=1.17.1",
     "xarray>=2026.1.0",
     "zarr<3.0",
     "bokeh>=3.8.2",
@@ -27,7 +27,7 @@ mxalign = "mxalign.cli:main"
 
 [project.optional-dependencies]
 earthkit = [
-    "earthkit-meteo>=0.6.1",
+    "earthkit-meteo>=0.6.2",
 ]
 ifs = [
     "cfgrib>=0.9.15.1",
