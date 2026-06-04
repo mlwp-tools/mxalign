@@ -118,6 +118,31 @@ class BaseLoader(ABC):
         """
         return None
 
+    def slice(self, reference_time, lead_times, variables):
+        """Eagerly load a single per-reference_time slice.
+
+        Returns an in-memory ``xr.Dataset`` with dims ``(lead_time, grid_index)``
+        and one data variable per name in ``variables``. No ``reference_time``
+        dim (callers iterate reference_times). Bypasses xarray/dask lazy
+        graphs by reading directly from the underlying store.
+
+        Parameters
+        ----------
+        reference_time
+            datetime64-coercible. Forecast initial time to read.
+        lead_times
+            Sequence of timedelta64-coercible offsets from reference_time.
+        variables
+            List of variable names to read. Required.
+
+        Returns
+        -------
+        xr.Dataset | None
+            None if this loader cannot serve a per-rt slice (e.g. unsupported
+            file layout). The fused engine treats None as a hard error.
+        """
+        return None
+
 
 @register_loader
 class MxAlignLoader(BaseLoader):
