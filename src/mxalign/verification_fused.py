@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import statistics
+import threading
 import time
 import warnings
 from collections import deque
@@ -482,6 +483,47 @@ def _log_progress(done, total, t_start, timings_window, in_flight):
     LOG.info(" ".join(parts))
 
 
+def _prefetch_nc_file(path: str) -> None:
+    """Read *path* sequentially in a daemon thread to populate the OS page
+    cache. Errors are silently swallowed — a failed prefetch just means the
+    next leaf reads cold, which is no worse than before."""
+    try:
+        with open(path, "rb") as fh:
+            buf = bytearray(8 << 20)  # 8 MB read buffer
+            while fh.readinto(buf):
+                pass
+    except OSError:
+        pass
+
+
+def _schedule_prefetch(
+    rt_values,
+    idx: int,
+    recipes: dict,
+    prefetch_ahead: int,
+) -> None:
+    """Start a background prefetch daemon thread for the forecast NC file(s)
+    belonging to rt_values[idx + prefetch_ahead], if any.
+    Only fires for 'anemoi-inference-nc' recipes (not zarr).
+    """
+    target_idx = idx + prefetch_ahead
+    if target_idx >= len(rt_values):
+        return
+    rt = rt_values[target_idx]
+    for name, recipe in recipes.items():
+        if recipe.get("kind") != "anemoi-inference-nc":
+            continue
+        key = _rt_key(rt)
+        path = recipe.get("files_by_rt", {}).get(key)
+        if path:
+            threading.Thread(
+                target=_prefetch_nc_file,
+                args=(path,),
+                daemon=True,
+                name=f"mxalign-prefetch-{name}-{target_idx}",
+            ).start()
+
+
 def compute_metrics_fused(
     datasets,
     loaders,
@@ -546,6 +588,15 @@ def compute_metrics_fused(
     else:
         max_in_flight = 1
 
+    # Prefetch: background daemon threads warm the OS page cache for the next
+    # NC file(s) while the current leaf is being processed. Enabled via
+    # `prefetch: true` in the `verification:` yaml block. Only fires for
+    # anemoi-inference-nc recipes; zarr datasets are skipped.
+    prefetch_enabled = bool(engine_cfg.get("prefetch", False))
+    # Look-ahead depth: start prefetching the file for leaf N+prefetch_ahead
+    # when leaf N is submitted/consumed. Default max_in_flight+1.
+    prefetch_ahead = max(1, int(engine_cfg.get("prefetch_ahead", max_in_flight + 1)))
+
     LOG.info(
         "[mxalign] fused start n_rt=%d n_models=%d n_metrics=%d n_vars=%d "
         "n_lt=%d max_in_flight=%d client=%s recipes={%s}",
@@ -586,6 +637,8 @@ def compute_metrics_fused(
     if client is None:
         # Serial fallback (mainly for --cluster threads).
         for i, rt in enumerate(rt_values):
+            if prefetch_enabled:
+                _schedule_prefetch(rt_values, i, recipes, prefetch_ahead)
             try:
                 result = _leaf(rt, lead_times_ns, **leaf_kwargs)
             except Exception:
@@ -622,8 +675,10 @@ def compute_metrics_fused(
         ac = as_completed()
         i_next = 0
         in_flight = 0
-        # Prime the window.
+        # Prime the window (and optionally prime the prefetch pipeline).
         for _ in range(min(max_in_flight, n_rt)):
+            if prefetch_enabled:
+                _schedule_prefetch(rt_values, i_next, recipes, prefetch_ahead)
             fut = client.submit(_leaf_bundled, rt_values[i_next], static_future,
                                 pure=False)
             fut._mxalign_rt_idx = i_next  # informational
@@ -647,6 +702,8 @@ def compute_metrics_fused(
             except Exception:
                 pass
             if i_next < n_rt:
+                if prefetch_enabled:
+                    _schedule_prefetch(rt_values, i_next, recipes, prefetch_ahead)
                 fut2 = client.submit(_leaf_bundled, rt_values[i_next],
                                      static_future, pure=False)
                 fut2._mxalign_rt_idx = i_next
