@@ -1,7 +1,11 @@
 from .registry import register_transformation
 
 
-@register_transformation("external")
+def _sig_external(func_path, inputs, output, **_):
+    return list(inputs.values()), [output]
+
+
+@register_transformation("external", signature=_sig_external)
 def transform(ds, func_path, inputs, output, **kwargs):
     func = _resolve_function(func_path)
 
