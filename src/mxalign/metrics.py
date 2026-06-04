@@ -414,6 +414,157 @@ def brier_score_chunked(fcst, obs, threshold_min, threshold_max, threshold_by,
     return xr.Dataset(per_var)
 
 
+def spread_skill_spectrum(observations, forecasts, dim_x, dim_y, res,
+                          variables=None, n_bins=None, ref_time_chunk=50,
+                          member_dim="member"):
+    """Ensemble spread–skill as a function of spatial scale (spectral space).
+
+    Adapted from SpectralGridded (bris). Order of operations:
+      1. DCT-II each ensemble member and the analysis independently
+      2. spread_variance(kx,ky) = sample variance across members of DCT coefficients
+         error_variance(kx,ky)  = (ensemble-mean DCT − analysis DCT)²
+      3. Isotropic-average over k-angle bins → 1-D spectra per (time, leadtime)
+
+    Step 4 (time-average + sqrt) is deferred to the caller:
+        spread(k) = sqrt(mean(spread_variance, axis="reference_time"))
+        rmse(k)   = sqrt(mean(error_variance,  axis="reference_time"))
+
+    Parameters
+    ----------
+    observations : xr.Dataset
+        Analysis/reference dataset, dims (reference_time, lead_time, grid_index).
+    forecasts : xr.Dataset
+        Ensemble forecasts, dims (reference_time, lead_time, grid_index, member_dim).
+    dim_x, dim_y : int
+        2-D grid shape; len(grid_index) must equal dim_x * dim_y.
+    res : float
+        Grid spacing in metres (uniform, dx = dy = res).
+    variables : list of str, optional
+        Subset of variables. All data_vars of forecasts are used if None.
+    n_bins : int, optional
+        Number of wavenumber bins. Defaults to min(dim_x, dim_y) // 2.
+    ref_time_chunk : int
+        Reference times loaded per .load() call (default: 50).
+    member_dim : str
+        Name of the ensemble member dimension (default: "member").
+
+    Returns
+    -------
+    xr.Dataset
+        For each variable, four DataArrays (all dims reference_time, lead_time, k
+        except spectrum_fct which has an extra member dim):
+          {var}_spread_var    : sample variance of DCT coefficients across members
+          {var}_error_var     : squared error of ensemble-mean DCT vs analysis DCT
+          {var}_spectrum_fct  : power spectrum per ensemble member
+          {var}_spectrum_obs  : power spectrum of the analysis
+        k is the bin-centre wavenumber in rad/m.
+    """
+    if variables is not None:
+        observations = observations[variables]
+        forecasts    = forecasts[variables]
+
+    # Wavenumber grid, same convention as power_spectrum / DCTPowerSpectrum
+    dx = dy = res
+    kx = np.pi * np.arange(dim_x) / (dim_x * dx)
+    ky = np.pi * np.arange(dim_y) / (dim_y * dy)
+    KX, KY    = np.meshgrid(kx, ky, indexing='ij')
+    k         = np.sqrt(KX**2 + KY**2)
+    k_max     = k.max()
+    _n_bins   = n_bins if n_bins is not None else min(dim_x, dim_y) // 2
+    k_edges   = np.linspace(0.0, k_max, _n_bins + 1)
+    k_centers = 0.5 * (k_edges[1:] + k_edges[:-1])
+    digitized = np.digitize(k.flatten(), k_edges)
+
+    def _bin_average_2d(field_2d):
+        """Angle-average a (dim_x, dim_y) spectral field → 1-D array of length n_bins."""
+        flat = field_2d.flatten()
+        return np.array(
+            [flat[digitized == j].mean() if np.any(digitized == j) else np.nan
+             for j in range(1, _n_bins + 1)],
+            dtype=np.float32,
+        )
+
+    def _bin_average_2d_per_member(field_2d_ens):
+        """Angle-average a (dim_x, dim_y, N) array → (n_bins, N)."""
+        flat = field_2d_ens.reshape(-1, field_2d_ens.shape[-1])  # (grid, N)
+        return np.array(
+            [flat[digitized == j].mean(axis=0) if np.any(digitized == j) else np.full(flat.shape[-1], np.nan)
+             for j in range(1, _n_bins + 1)],
+            dtype=np.float32,
+        )
+
+    def _process_variable(fct_da, obs_da):
+        ref_times  = fct_da.reference_time.values
+        lead_times = fct_da.lead_time.values
+        n_rt       = len(ref_times)
+        n_lt       = len(lead_times)
+        members    = fct_da[member_dim].values
+        N          = len(members)
+
+        grid_dim = next(d for d in fct_da.dims if d not in ("reference_time", "lead_time", member_dim))
+
+        fct_da = fct_da.transpose("reference_time", "lead_time", grid_dim, member_dim)
+        obs_da = obs_da.transpose("reference_time", "lead_time", grid_dim)
+
+        spread_var   = np.full((n_rt, n_lt, _n_bins), np.nan, dtype=np.float32)
+        error_var    = np.full((n_rt, n_lt, _n_bins), np.nan, dtype=np.float32)
+        spectrum_fct = np.full((n_rt, n_lt, _n_bins, N), np.nan, dtype=np.float32)
+        spectrum_obs = np.full((n_rt, n_lt, _n_bins), np.nan, dtype=np.float32)
+
+        for t_start in range(0, n_rt, ref_time_chunk):
+            t_end      = min(t_start + ref_time_chunk, n_rt)
+            fct_chunk  = fct_da.isel(reference_time=slice(t_start, t_end)).load().values
+            obs_chunk  = obs_da.isel(reference_time=slice(t_start, t_end)).load().values
+            # fct_chunk: (t_chunk, lt, grid, member) ; obs_chunk: (t_chunk, lt, grid)
+            t_chunk = fct_chunk.shape[0]
+
+            # Reshape spatial dimension: (t, lt, grid, member) → (t, lt, nx, ny, member)
+            obs_2d = obs_chunk.reshape(t_chunk, n_lt, dim_x, dim_y)
+            fct_2d = fct_chunk.reshape(t_chunk, n_lt, dim_x, dim_y, N)
+
+            # Step 1: DCT over spatial axes (2, 3) for the whole chunk at once
+            obs_k  = dctn(obs_2d, axes=(2, 3), type=2, norm='ortho')   # (t, lt, kx, ky)
+            pred_k = dctn(fct_2d, axes=(2, 3), type=2, norm='ortho')   # (t, lt, kx, ky, N)
+
+            # Step 2: spread and error variance in spectral space
+            ens_mean        = pred_k.mean(axis=4)                         # (t, lt, kx, ky)
+            spread_var_k    = ((pred_k - ens_mean[..., None]) ** 2).sum(axis=4) / (N - 1)
+            error_var_k     = (ens_mean - obs_k) ** 2                    # (t, lt, kx, ky)
+            P_obs           = obs_k ** 2                                  # (t, lt, kx, ky)
+            P_pred          = pred_k ** 2                                 # (t, lt, kx, ky, N)
+
+            # Step 3: angle-average over k, per (t, lt)
+            for t in range(t_chunk):
+                if np.any(np.isnan(fct_chunk[t])) or np.any(np.isnan(obs_chunk[t])):
+                    continue
+                for lt in range(n_lt):
+                    spread_var[t_start + t, lt]    = _bin_average_2d(spread_var_k[t, lt])
+                    error_var[t_start + t, lt]     = _bin_average_2d(error_var_k[t, lt])
+                    spectrum_fct[t_start + t, lt]  = _bin_average_2d_per_member(P_pred[t, lt])
+                    spectrum_obs[t_start + t, lt]  = _bin_average_2d(P_obs[t, lt])
+
+        coords_3d = {"reference_time": ref_times, "lead_time": lead_times, "k": k_centers}
+        return {
+            "spread_var":   xr.DataArray(spread_var,   dims=["reference_time", "lead_time", "k"], coords=coords_3d),
+            "error_var":    xr.DataArray(error_var,    dims=["reference_time", "lead_time", "k"], coords=coords_3d),
+            "spectrum_fct": xr.DataArray(spectrum_fct, dims=["reference_time", "lead_time", "k", member_dim],
+                                         coords={**coords_3d, member_dim: members}),
+            "spectrum_obs": xr.DataArray(spectrum_obs, dims=["reference_time", "lead_time", "k"], coords=coords_3d),
+        }
+
+    per_var = {}
+    for var in list(forecasts.data_vars):
+        if var not in observations.data_vars:
+            print(f"  spread_skill_spectrum: '{var}' not in observations — skipping.", flush=True)
+            continue
+        print(f"  spread_skill_spectrum: {var} ...", flush=True)
+        result = _process_variable(forecasts[var], observations[var])
+        for suffix, da in result.items():
+            per_var[f"{var}_{suffix}"] = da
+
+    return xr.Dataset(per_var)
+
+
 def power_spectrum(observations, forecasts, dim_x, dim_y, res,
                    variables=None, n_bins=None, compute_obs=True, compute_fct=True, ref_time_chunk=50):
     """2D isotropic power spectrum, one curve per (reference_time, lead_time).
