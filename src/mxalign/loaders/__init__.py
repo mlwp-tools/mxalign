@@ -3,4 +3,5 @@ from . import anemoi_inference
 from . import harp_obstable
 from . import base
 from . import zarr_uwcw_forecasts
+from . import zarr_uwcw_forecasts_ens
 
