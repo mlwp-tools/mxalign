@@ -87,7 +87,6 @@ class DelaunayInterpolator(BaseInterpolator):
             latitude=self.target_dataset["latitude"],
             longitude=self.target_dataset["longitude"],
         )
-<<<<<<< HEAD
 
         ds_out.attrs.update(
             {
@@ -96,9 +95,6 @@ class DelaunayInterpolator(BaseInterpolator):
             }
         )
         return ds_out
-=======
-        return set_properties_attrs(ds_out, properties_from_attrs(source_dataset))
->>>>>>> main
 
 
 def _build_weight_matrix(
