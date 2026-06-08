@@ -20,6 +20,8 @@ dependencies = [
     "zarr<3.0",
     "bokeh>=3.8.2",
     "distributed>=2026.1.2",
+    "mlwp-data-specs",
+    "mlwp-data-loaders",
 ]
 
 [project.scripts]
@@ -44,3 +46,7 @@ build-backend = "hatchling.build"
 dev = [
     "ipykernel>=7.2.0",
 ]
+
+[tool.uv.sources]
+mlwp-data-specs = { git = "https://github.com/mlwp-tools/mlwp-data-specs", rev = "059f382" }
+mlwp-data-loaders = { git = "https://github.com/mlwp-tools/mlwp-data-loaders" }
