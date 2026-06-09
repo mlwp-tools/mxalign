@@ -1,0 +1,49 @@
+### CI actions are pinned to immutable commit hashes, not mutable tags, to reduce supply-chain risk and help prevent LLM-based CI attacks. See https://github.com/lirantal/pypi-security-best-practices#13-secure-your-cicd-release-pipeline.
+name: publish to pypi
+
+on:
+  workflow_dispatch:
+  release:
+    types:
+      - published
+
+jobs:
+  build:
+    name: build package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          enable-cache: true
+
+      - run: uv build
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-dist
+          path: dist/*
+
+  publish:
+    name: publish package to PyPI
+    needs: build
+    if: github.event_name == 'release' && github.event.action == 'published'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: package-dist
+          path: dist
+
+      # Requires PyPI Trusted Publishing to be configured for this GitHub
+      # repository/workflow/environment on pypi.org. The `id-token: write`
+      # permission above lets this action request an OIDC token, in place of a
+      # PYPI_TOKEN repository secret.
+      - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # 1.14.0
