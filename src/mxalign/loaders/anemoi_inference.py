@@ -72,10 +72,10 @@ class AnemoiInferenceLoader(BaseLoader):
     def _files_by_rt(self):
         """Return ({rt_ns: path}, engine) or (None, engine) if unsupported.
 
-        Shared by ``fast_slice_recipe`` and ``slice``: maps each
-        reference_time (np.datetime64[ns]) to the .nc file path containing
-        that forecast. Only the per-file netCDF path is supported
-        (single-zarr forecasts return None).
+        Shared by ``slice`` and ``prefetch_path``: maps each reference_time
+        (np.datetime64[ns]) to the .nc file path containing that forecast.
+        Only the per-file netCDF path is supported (single-zarr forecasts
+        return None).
         """
         files = [self.files] if isinstance(self.files, str) else list(self.files)
         engine = self.kwargs.get("engine", DEFAULTS_NETCDF["engine"])
@@ -103,21 +103,16 @@ class AnemoiInferenceLoader(BaseLoader):
             engine,
         )
 
-    def fast_slice_recipe(self):
-        """Per-reference_time loading recipe for the fused engine.
-
-        Maps each reference_time (np.datetime64[ns]) to the .nc file path
-        containing that forecast.  Only the per-file netCDF path is
-        supported (single-zarr forecasts return None).
+    def prefetch_path(self, reference_time):
+        """Return the on-disk path the fused engine should warm into the OS
+        page cache for ``reference_time``, or ``None`` if not available
+        (single-zarr forecasts, unparseable filenames).
         """
-        files_by_rt, engine = self._files_by_rt()
+        files_by_rt, _ = self._files_by_rt()
         if files_by_rt is None:
             return None
-        return {
-            "kind": "anemoi-inference-nc",
-            "files_by_rt": files_by_rt,
-            "engine": engine,
-        }
+        rt_ns = int(np.datetime64(reference_time, "ns").astype("int64"))
+        return files_by_rt.get(rt_ns)
 
     def slice(self, reference_time, lead_times, variables):
         """Eagerly read one (reference_time, lead_times, variables) slice.
