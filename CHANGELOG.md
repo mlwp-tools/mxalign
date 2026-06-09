@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Store dataset properties as netCDF-safe individual attributes while keeping read compatibility with legacy `attrs["properties"]` dict/JSON data. [\#21](https://github.com/mlwp-tools/mxalign/pull/21) @observingClouds
 - Added CI test workflow with first unit tests. [\#21](https://github.com/mlwp-tools/mxalign/pull/21) @observingClouds
 - Added optional `ifs` dependency group with `cfgrib`, `eccodes`, and `eccodeslib`. [\#21](https://github.com/mlwp-tools/mxalign/pull/21) @observingClouds
+- Added CI action for package build and upload to pypi.org on releases. [\#28](https://github.com/mlwp-tools/mxalign/pull/28) @leifdenby
 
 ## [0.1.0](https://github.com/mlwp-tools/mxalign/releases/tag/v0.1.0)
 
