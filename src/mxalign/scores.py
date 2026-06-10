@@ -73,3 +73,113 @@ def bias(fcst, obs, reduce_dims=None, **_):
 # so existing YAMLs that say ``function: scores.continuous.mean_error`` can
 # migrate to ``function: mxalign.scores.mean_error`` without semantic drift.
 mean_error = bias
+
+
+def nvv(fcst, obs, reduce_dims=None, components=None, variables=None,
+        eps=0.0, label=None, **_):
+    """Normalized Vector Variance.
+
+    Compares the temporal spread of one or more vector fields in forecast vs
+    observation.  For each group of components ``i``, the vector variance is::
+
+        VV = sqrt( sum_i Var(x_i) )
+
+    where ``Var(x_i)`` is the variance of component ``i`` along
+    ``reduce_dims``.  The NVV is::
+
+        NVV = VV_fcst / max(VV_obs, eps)
+
+    Two calling forms are supported:
+
+    **Single group** (``components`` key)::
+
+        metrics:
+          nvv_wind10m:
+            function: mxalign.scores.nvv
+            inputs: {fcst: forecast, obs: reference}
+            reduce_dims: [reference_time]
+            components: [10u, 10v]
+            label: wind10m        # optional; default "10u+10v"
+
+    **Multiple groups** (``variables`` key)::
+
+        metrics:
+          nvv:
+            function: mxalign.scores.nvv
+            inputs: {fcst: forecast, obs: reference}
+            reduce_dims: [reference_time, grid_index]
+            variables:
+              z_500_grad:
+                components: [z_500_grad_x, z_500_grad_y]
+              q_500_grad:
+                components: [q_500_grad_x, q_500_grad_y]
+                eps: 1.0e-5     # per-group override (optional)
+
+    Parameters
+    ----------
+    fcst, obs : xr.Dataset
+        Forecast and observation datasets.
+    reduce_dims : str or list of str
+        Dimension(s) to reduce over (e.g. ``["reference_time"]``).
+    components : list of str
+        Single-group form: variable names forming the vector.
+    variables : dict
+        Multi-group form: ``{label: {components: [...], eps: ...}, ...}``.
+        Top-level ``eps`` is the default for any group that omits it.
+    eps : float
+        Zero-guard threshold, in the units of VV (not VV squared). NVV is set
+        to NaN wherever ``VV_obs <= eps``. Default ``0.0`` masks only an
+        exactly-zero observation spread. Note: this is *not* a floor added to
+        the denominator (which would corrupt small-magnitude fields such as
+        specific-humidity gradients); it only masks undefined ratios.
+    label : str, optional
+        Coordinate value for the synthetic ``variable`` dim in single-group
+        form. Defaults to ``"+".join(components)``.
+
+    Returns
+    -------
+    xr.DataArray
+        Shape ``(variable, ...)`` where ``variable`` has one entry per group
+        and ``...`` are whatever dims remain after reducing over
+        ``reduce_dims``.
+    """
+    import xarray as xr
+
+    # ---- normalise to the grouped form ------------------------------------
+    if variables is not None:
+        groups = {
+            grp_label: {
+                "components": grp_cfg["components"],
+                "eps": grp_cfg.get("eps", eps),
+            }
+            for grp_label, grp_cfg in variables.items()
+        }
+    elif components:
+        coord = label if label is not None else "+".join(components)
+        groups = {coord: {"components": components, "eps": eps}}
+    else:
+        raise ValueError(
+            "mxalign.scores.nvv requires either `components:` (single group) "
+            "or `variables:` (multiple groups) to be set."
+        )
+
+    rd = [reduce_dims] if isinstance(reduce_dims, str) else list(reduce_dims or [])
+
+    results = {}
+    for grp_label, grp_cfg in groups.items():
+        comps = grp_cfg["components"]
+        grp_eps = grp_cfg["eps"]
+
+        vv_sq_fcst = None
+        vv_sq_obs = None
+        for var in comps:
+            s2_fcst = (fcst[var] if isinstance(fcst, xr.Dataset) else fcst).var(dim=rd)
+            s2_obs = (obs[var] if isinstance(obs, xr.Dataset) else obs).var(dim=rd)
+            vv_sq_fcst = s2_fcst if vv_sq_fcst is None else vv_sq_fcst + s2_fcst
+            vv_sq_obs = s2_obs if vv_sq_obs is None else vv_sq_obs + s2_obs
+
+        vv_fcst = vv_sq_fcst ** 0.5
+        vv_obs = vv_sq_obs ** 0.5
+        results[grp_label] = (vv_fcst / vv_obs).where(vv_obs > grp_eps)
+
+    return xr.Dataset(results)
