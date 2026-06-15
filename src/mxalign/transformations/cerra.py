@@ -21,9 +21,10 @@ numerical output (to floating-point round-off).
 
 from __future__ import annotations
 
+import fnmatch
 import xarray as xr
 
-from .registry import register_transformation
+from .registry import register_transformation, register_expander
 from ..utils.projections import BUILTIN
 
 # Defaults sourced from the canonical CERRA grid description.
@@ -126,23 +127,57 @@ def _cerra_gradient_axis(da: xr.DataArray, axis_xy: str, *, grid_dim: str,
         )
 
     da_t = da.transpose(..., grid_dim)
-    result = _compute_gradient(da_t.values, axis_xy, ny, nx, dx, dy)
-    out = xr.DataArray(
-        result,
-        dims=da_t.dims,
-        coords={k: v for k, v in da_t.coords.items() if set(v.dims).issubset(da_t.dims)},
-        name=da.name,
-        attrs=dict(da.attrs),
+
+    # Use apply_ufunc so the computation is lazy when the input DataArray is
+    # backed by dask (e.g. when transform_datasets runs on the full loaded
+    # dataset before alignment).  The grid_dim is a core dimension passed as
+    # the last axis to _compute_gradient; allow_rechunk ensures the spatial
+    # axis is never split across chunks (required for the 2-D reshape).
+    result = xr.apply_ufunc(
+        _compute_gradient,
+        da_t,
+        kwargs=dict(axis_xy=axis_xy, ny=ny, nx=nx, dx=dx, dy=dy),
+        input_core_dims=[[grid_dim]],
+        output_core_dims=[[grid_dim]],
+        dask="parallelized",
+        output_dtypes=[da_t.dtype],
+        dask_gufunc_kwargs={"allow_rechunk": True},
     )
-    return out.transpose(*da.dims)
+    result.name = da.name
+    result.attrs.update(da.attrs)
+    return result.transpose(*da.dims)
 
 
-def _apply(ds: xr.Dataset, variables, outputs, axis_xy: str, *,
+def _expand_vars(patterns, ds_vars):
+    """Expand a list of variable name patterns (may contain ``*`` / ``?`` globs)
+    against the concrete variable names in ``ds_vars``.
+
+    Literal names that contain no wildcards are kept as-is (and will cause an
+    error later if they are absent from the dataset, which is the intended
+    behaviour).  Glob patterns that match nothing are silently dropped.
+    """
+    result = []
+    for p in (patterns if not isinstance(patterns, str) else [patterns]):
+        if any(c in p for c in ("*", "?", "[")):
+            result.extend(sorted(v for v in ds_vars if fnmatch.fnmatch(v, p)))
+        else:
+            result.append(p)
+    return result
+
+
+def _apply(ds: xr.Dataset, variables, outputs=None, axis_xy: str = "x", *,
            grid_dim: str = "grid_index",
            ny: int = _NY_DEFAULT, nx: int = _NX_DEFAULT,
            dx: float = _DX_DEFAULT, dy: float = _DY_DEFAULT) -> xr.Dataset:
-    vs = [variables] if isinstance(variables, str) else list(variables)
-    os_ = [outputs] if isinstance(outputs, str) else list(outputs)
+    vs = _expand_vars(
+        [variables] if isinstance(variables, str) else list(variables),
+        list(ds.data_vars),
+    )
+    if outputs is None:
+        suffix = f"_grad_{axis_xy}"
+        os_ = [f"{v}{suffix}" for v in vs]
+    else:
+        os_ = [outputs] if isinstance(outputs, str) else list(outputs)
     if len(vs) != len(os_):
         raise ValueError(
             f"variables and outputs must have the same length, "
@@ -161,17 +196,47 @@ def _apply(ds: xr.Dataset, variables, outputs, axis_xy: str, *,
 # ---------------------------------------------------------------------------
 
 
-def _sig_cerra_grad(variables, outputs, **_):
+def _sig_cerra_grad(variables, outputs=None, **_):
     v = [variables] if isinstance(variables, str) else list(variables)
+    if outputs is None:
+        # Outputs can't be derived without the dataset when globs are present;
+        # the expander will have resolved them to concrete names before this
+        # is called by _derive_source_vars, so outputs will not be None there.
+        raise ValueError(
+            "cerra_gradient signature called with outputs=None; ensure the "
+            "transformation expander ran before recording kwargs."
+        )
     o = [outputs] if isinstance(outputs, str) else list(outputs)
     return v, o
 
 
+def _make_expander(axis_xy: str):
+    suffix = f"_grad_{axis_xy}"
+
+    def expander(ds, kwargs: dict) -> dict:
+        kw = dict(kwargs)
+        vars_raw = kw.get("variables", [])
+        expanded = _expand_vars(
+            [vars_raw] if isinstance(vars_raw, str) else list(vars_raw),
+            list(ds.data_vars),
+        )
+        kw["variables"] = expanded
+        if kw.get("outputs") is None:
+            kw["outputs"] = [f"{v}{suffix}" for v in expanded]
+        return kw
+
+    return expander
+
+
+register_expander("cerra_gradient_x")(_make_expander("x"))
+register_expander("cerra_gradient_y")(_make_expander("y"))
+
+
 @register_transformation("cerra_gradient_x", signature=_sig_cerra_grad)
-def transform_cerra_gradient_x(ds, variables, outputs, **grid_kwargs):
+def transform_cerra_gradient_x(ds, variables, outputs=None, **grid_kwargs):
     return _apply(ds, variables, outputs, axis_xy="x", **grid_kwargs)
 
 
 @register_transformation("cerra_gradient_y", signature=_sig_cerra_grad)
-def transform_cerra_gradient_y(ds, variables, outputs, **grid_kwargs):
+def transform_cerra_gradient_y(ds, variables, outputs=None, **grid_kwargs):
     return _apply(ds, variables, outputs, axis_xy="y", **grid_kwargs)

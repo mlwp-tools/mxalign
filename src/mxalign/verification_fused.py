@@ -587,3 +587,364 @@ def compute_metrics_fused(
         accums, metric_finalizers, n_rt, common_vars, reference, model_order,
         metric_order,
     )
+
+
+# ===========================================================================
+# Collect engine  (fused_collect)
+# ===========================================================================
+#
+# For metrics that reduce over spatial dims only (e.g. NVV with
+# reduce_dims=[grid_index]), each reference-time task is independent: no
+# partial accumulation across rts is needed.  The pattern is:
+#
+#   for each rt (in parallel):
+#       load → transform → call metric(fcst_ds, obs_ds, **kwargs) → xr.Dataset
+#   collect all per-rt results → concat along reference_time → return
+#
+# The leaf passes xr.Dataset objects directly to the metric function, so the
+# function can access variables by name (required for grouped vector metrics).
+# ===========================================================================
+
+
+def _collect_component_vars(metrics_cfg, ds_vars=None):
+    """All variable names used as vector components across all collect metrics.
+
+    When ``ds_vars`` is provided, glob patterns in group keys or component
+    lists are expanded against it before collecting variable names.
+    """
+    needed: set[str] = set()
+    for mcfg in metrics_cfg.values():
+        vars_cfg = mcfg.get("variables") or {}
+        # Expand glob patterns if dataset variable names are available.
+        if ds_vars is not None and vars_cfg and (
+            any("*" in k for k in vars_cfg)
+            or any("*" in c for v in vars_cfg.values() for c in v.get("components", []))
+        ):
+            from .scores import _expand_group_patterns
+            vars_cfg = _expand_group_patterns(vars_cfg, ds_vars)
+        for grp_cfg in vars_cfg.values():
+            needed.update(grp_cfg.get("components", []))
+        comps = mcfg.get("components")
+        if comps:
+            needed.update(comps)
+    return needed
+
+
+def _leaf_collect(
+    rt_value,
+    lead_times_ns,
+    ref_name,
+    model_names,
+    loaders,
+    source_vars_by_ds,
+    transforms_by_ds,
+    metric_specs,  # {metric_name: (func_path, inputs_map_or_None, extra_kwargs)}
+):
+    """Per-rt leaf for the collect engine.
+
+    Returns:
+      {
+        "rt_value": rt_value,
+        "timings":  {load_<ds>: float, transform_<ds>: float, kernel: float, total: float},
+        "results":  {model_name: {metric_name: xr.Dataset}},
+      }
+    """
+    t0 = time.perf_counter()
+    timings: dict[str, float] = {}
+
+    # 1. Load
+    slices: dict[str, xr.Dataset] = {}
+    for ds_name, loader in loaders.items():
+        t = time.perf_counter()
+        slices[ds_name] = loader.slice(rt_value, lead_times_ns, source_vars_by_ds[ds_name])
+        timings[f"load_{ds_name}"] = time.perf_counter() - t
+
+    # 2. Transform
+    for ds_name, ds in list(slices.items()):
+        t = time.perf_counter()
+        for tname, tkwargs in transforms_by_ds.get(ds_name, []):
+            func = get_transformation(tname)
+            ds = func(ds.copy(), **tkwargs)
+        slices[ds_name] = ds
+        timings[f"transform_{ds_name}"] = time.perf_counter() - t
+
+    # 3. Apply metric functions directly on xr.Dataset slices.
+    ref_ds = slices[ref_name]
+    results: dict[str, dict[str, xr.Dataset]] = {}
+    t = time.perf_counter()
+    for m in model_names:
+        model_ds = slices[m]
+        per_metric: dict[str, xr.Dataset] = {}
+        for mn, (func_path, inputs, extra_kwargs) in metric_specs.items():
+            fn = _resolve_function(func_path)
+            if inputs:
+                call_kwargs: dict = {
+                    arg: (ref_ds if role == "reference" else model_ds)
+                    for arg, role in inputs.items()
+                }
+            else:
+                call_kwargs = {"fcst": model_ds, "obs": ref_ds}
+            call_kwargs.update(extra_kwargs)
+            per_metric[mn] = fn(**call_kwargs)
+        results[m] = per_metric
+    timings["kernel"] = time.perf_counter() - t
+    timings["total"] = time.perf_counter() - t0
+
+    return {"rt_value": rt_value, "timings": timings, "results": results}
+
+
+def _leaf_collect_bundled(rt_value, static):
+    return _leaf_collect(
+        rt_value,
+        static["lead_times_ns"],
+        ref_name=static["ref_name"],
+        model_names=static["model_names"],
+        loaders=static["loaders"],
+        source_vars_by_ds=static["source_vars_by_ds"],
+        transforms_by_ds=static["transforms_by_ds"],
+        metric_specs=static["metric_specs"],
+    )
+
+
+def _make_xr_collect_result(collected, reference, model_order, metric_order):
+    """Build final xr.DataArray from a list of per-rt result dicts (sorted by rt).
+
+    Each result["results"][model][metric] is an xr.Dataset with one data
+    variable per vector group and dim ``(lead_time,)``.
+
+    Output: xr.DataArray with dims ``(model, metric, variable, reference_time,
+    lead_time)``, matching the format produced by the xarray engine so that
+    downstream code and saved netCDF files have a consistent ``metric``
+    coordinate dimension.
+    """
+    rt_values = np.array([r["rt_value"] for r in collected])
+    lead_times = reference["lead_time"].values
+
+    out: dict[str, xr.DataArray] = {}
+    for mn in metric_order:
+        model_arrays = []
+        group_names = None
+        for m in model_order:
+            rt_datasets = [r["results"][m][mn] for r in collected]
+            if group_names is None:
+                group_names = list(rt_datasets[0].data_vars)
+
+            # Concat per-rt xr.Datasets along a new reference_time dimension.
+            combined = xr.concat(
+                rt_datasets,
+                dim=xr.DataArray(rt_values, dims="reference_time", name="reference_time"),
+            )
+            # combined: xr.Dataset({group: DataArray(reference_time, lead_time)})
+
+            # Stack vector groups into a "variable" dimension.
+            group_stack = xr.concat(
+                [combined[g] for g in group_names],
+                dim=xr.DataArray(group_names, dims="variable", name="variable"),
+            )
+            # Assign the canonical lead_time coordinate values.
+            group_stack = group_stack.assign_coords(lead_time=lead_times)
+            model_arrays.append(group_stack)
+
+        metric_da = xr.concat(
+            model_arrays,
+            dim=xr.DataArray(model_order, dims="model", name="model"),
+        )
+        out[mn] = metric_da  # (model, variable, reference_time, lead_time)
+
+    # Stack metrics along a "metric" dimension and wrap as a Dataset named
+    # "metrics", matching the fused engine's output format (_make_xr_result).
+    return xr.concat(
+        list(out.values()),
+        dim=xr.Variable("metric", metric_order),
+    ).transpose("model", "metric", ...).to_dataset(name="metrics")
+
+
+def compute_metrics_collect(
+    datasets,
+    loaders,
+    transforms_by_ds,
+    reference_name,
+    metrics_cfg,
+    engine_cfg,
+):
+    """Driver for the *fused_collect* engine.
+
+    For each reference_time, loads + transforms + calls the metric function
+    directly on ``xr.Dataset`` slices, then returns the per-rt result without
+    accumulation.  This is correct for metrics that reduce over spatial
+    dimensions only (e.g. NVV with ``reduce_dims: [grid_index]``).
+
+    Returns an ``xr.DataArray`` with dims
+    ``(model, metric, variable, reference_time, lead_time)``, matching the
+    format produced by the xarray engine.
+    """
+    reference = datasets[reference_name]
+    model_order = sorted(n for n in datasets if n != reference_name)
+    metric_order = list(metrics_cfg.keys())
+
+    # -- validate loaders ---------------------------------------------------
+    for name, loader in loaders.items():
+        if type(loader).slice is BaseLoader.slice:
+            raise NotImplementedError(
+                f"engine=fused_collect: loader {type(loader).__name__!r} for "
+                f"dataset {name!r} does not override BaseLoader.slice(); add a "
+                f"slice() method or use engine=xarray."
+            )
+
+    # -- build metric specs -------------------------------------------------
+    metric_specs: dict[str, tuple] = {}
+    for mn, mcfg in metrics_cfg.items():
+        func_path = mcfg.get("function")
+        if not func_path:
+            raise ValueError(
+                f"engine=fused_collect: metric {mn!r} has no 'function:' entry."
+            )
+        _resolve_function(func_path)  # fail-fast on bad path
+        inputs = mcfg.get("inputs")
+        extra_kwargs = {k: v for k, v in mcfg.items() if k not in ("function", "inputs")}
+        metric_specs[mn] = (func_path, inputs, extra_kwargs)
+
+    # -- derive source vars per dataset ------------------------------------
+    needed_vars = _collect_component_vars(
+        metrics_cfg,
+        ds_vars=datasets[reference_name].data_vars,
+    )
+    source_vars_by_ds = {
+        name: _derive_source_vars(sorted(needed_vars), transforms_by_ds.get(name, []))
+        for name in datasets
+    }
+
+    rt_values = reference["reference_time"].values
+    lead_times = reference["lead_time"].values
+    lead_times_ns = [int(np.timedelta64(lt, "ns").astype("int64")) for lt in lead_times]
+    n_rt = len(rt_values)
+
+    # -- Dask / serial setup (identical pattern to compute_metrics_fused) ---
+    client = None
+    try:
+        from dask.distributed import default_client, as_completed
+        client = default_client()
+    except Exception:
+        client = None
+
+    max_in_flight_cfg = engine_cfg.get("max_in_flight")
+    if client is not None:
+        n_workers = max(1, len(client.scheduler_info().get("workers", {})))
+        default_window = 2 * n_workers
+        max_in_flight = int(max_in_flight_cfg) if max_in_flight_cfg else default_window
+    else:
+        max_in_flight = 1
+
+    prefetch_enabled = bool(engine_cfg.get("prefetch", False))
+    prefetch_ahead = max(1, int(engine_cfg.get("prefetch_ahead", max_in_flight + 1)))
+
+    LOG.info(
+        "[mxalign] fused_collect start n_rt=%d n_models=%d n_metrics=%d "
+        "n_lt=%d max_in_flight=%d client=%s",
+        n_rt, len(model_order), len(metric_order), len(lead_times), max_in_flight,
+        "yes" if client is not None else "no (serial)",
+    )
+
+    timings_window: deque = deque(maxlen=64)
+    last_progress_log = time.perf_counter()
+    last_completion = time.perf_counter()
+    t_start = time.perf_counter()
+    done = 0
+    collected: list[dict] = []
+
+    def _consume(result):
+        nonlocal done, last_completion
+        collected.append(result)
+        timings_window.append(result["timings"])
+        done += 1
+        last_completion = time.perf_counter()
+
+    leaf_kwargs = dict(
+        ref_name=reference_name,
+        model_names=model_order,
+        loaders=loaders,
+        source_vars_by_ds=source_vars_by_ds,
+        transforms_by_ds=transforms_by_ds,
+        metric_specs=metric_specs,
+    )
+
+    if client is None:
+        for i, rt in enumerate(rt_values):
+            if prefetch_enabled:
+                _schedule_prefetch(rt_values, i, loaders, prefetch_ahead)
+            try:
+                result = _leaf_collect(rt, lead_times_ns, **leaf_kwargs)
+            except Exception:
+                LOG.exception("[mxalign] fused_collect leaf-failed rt_idx=%d rt=%s", i, rt)
+                raise
+            _consume(result)
+            now = time.perf_counter()
+            if now - last_progress_log >= 15.0:
+                _log_progress(done, n_rt, t_start, list(timings_window), 0)
+                last_progress_log = now
+    else:
+        static_bundle = dict(leaf_kwargs)
+        static_bundle["lead_times_ns"] = lead_times_ns
+        static_future = client.scatter(static_bundle, broadcast=True, hash=False)
+
+        warnings.filterwarnings(
+            "ignore",
+            message="Sending large graph of size",
+            category=UserWarning,
+            module=r"distributed\.client",
+        )
+
+        ac = as_completed()
+        i_next = 0
+        in_flight = 0
+        for _ in range(min(max_in_flight, n_rt)):
+            if prefetch_enabled:
+                _schedule_prefetch(rt_values, i_next, loaders, prefetch_ahead)
+            fut = client.submit(_leaf_collect_bundled, rt_values[i_next], static_future,
+                                pure=False)
+            fut._mxalign_rt_idx = i_next
+            ac.add(fut)
+            i_next += 1
+            in_flight += 1
+        for fut in ac:
+            try:
+                result = fut.result()
+            except Exception:
+                LOG.exception(
+                    "[mxalign] fused_collect leaf-failed rt_idx=%d",
+                    getattr(fut, "_mxalign_rt_idx", -1),
+                )
+                raise
+            _consume(result)
+            in_flight -= 1
+            try:
+                fut.release()
+            except Exception:
+                pass
+            if i_next < n_rt:
+                if prefetch_enabled:
+                    _schedule_prefetch(rt_values, i_next, loaders, prefetch_ahead)
+                fut2 = client.submit(_leaf_collect_bundled, rt_values[i_next],
+                                     static_future, pure=False)
+                fut2._mxalign_rt_idx = i_next
+                ac.add(fut2)
+                i_next += 1
+                in_flight += 1
+            now = time.perf_counter()
+            if now - last_progress_log >= 15.0:
+                _log_progress(done, n_rt, t_start, list(timings_window), in_flight)
+                last_progress_log = now
+            if now - last_completion >= 60.0 and in_flight > 0:
+                LOG.warning(
+                    "[mxalign] fused_collect stall: no leaf completion for %.0fs "
+                    "(done=%d/%d, inflight=%d)",
+                    now - last_completion, done, n_rt, in_flight,
+                )
+                last_completion = now
+
+    _log_progress(done, n_rt, t_start, list(timings_window), 0)
+
+    # Sort collected results by rt_value for deterministic output ordering.
+    collected.sort(key=lambda r: r["rt_value"])
+
+    return _make_xr_collect_result(collected, reference, model_order, metric_order)

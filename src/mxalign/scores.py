@@ -75,6 +75,94 @@ def bias(fcst, obs, reduce_dims=None, **_):
 mean_error = bias
 
 
+# ---------------------------------------------------------------------------
+# NVV group-pattern helpers (also imported by the fused_collect engine)
+# ---------------------------------------------------------------------------
+
+def _extract_captures(pattern, ds_vars):
+    """Return the set of ``*`` captures for a single-wildcard pattern.
+
+    Given a pattern such as ``"*_x"`` and a collection of variable names,
+    returns every string ``c`` such that ``pattern.replace("*", c)`` is
+    present in ``ds_vars``.  Literal patterns (no ``*``) return
+    ``{pattern}`` if the name exists, else an empty set.
+    """
+    if "*" not in pattern:
+        return {pattern} if pattern in ds_vars else set()
+    idx = pattern.index("*")
+    prefix, suffix = pattern[:idx], pattern[idx + 1:]
+    if "*" in suffix:
+        raise ValueError(
+            f"Multiple wildcards are not supported in component patterns: {pattern!r}"
+        )
+    captures: set[str] = set()
+    for v in ds_vars:
+        if not v.startswith(prefix):
+            continue
+        rest = v[len(prefix):]
+        if suffix:
+            if not rest.endswith(suffix):
+                continue
+            captures.add(rest[: -len(suffix)])
+        else:
+            captures.add(rest)
+    return captures
+
+
+def _expand_group_patterns(variables_cfg, ds_vars):
+    """Expand glob-keyed entries in an NVV ``variables:`` config dict.
+
+    A group is treated as a glob entry when its key or any component
+    pattern contains ``*``.  For each such entry, all values of the
+    wildcard are found such that **every** component pattern evaluates to
+    an existing variable name (present in ``ds_vars``); a concrete group
+    is created for each valid capture.
+
+    Literal-keyed entries (no ``*`` in key or components) are kept as-is
+    and override any glob-generated group that has the same resolved name.
+
+    Parameters
+    ----------
+    variables_cfg : dict
+        Raw ``variables:`` dict from the YAML metric config.
+    ds_vars : iterable of str
+        Variable names available in the dataset at evaluation time.
+
+    Returns
+    -------
+    dict
+        Fully-resolved ``{group_name: {"components": [...], ...}}`` dict
+        suitable for direct use in :func:`nvv`.
+    """
+    ds_set = set(ds_vars)
+    literal: dict = {}
+    globs: list = []
+    for key, grp_cfg in variables_cfg.items():
+        comps = grp_cfg.get("components", [])
+        if "*" in key or any("*" in c for c in comps):
+            globs.append((key, grp_cfg))
+        else:
+            literal[key] = grp_cfg
+
+    expanded: dict = {}
+    for key_tmpl, grp_cfg in globs:
+        comps = grp_cfg.get("components", [])
+        # Intersection of captures that satisfy ALL component patterns.
+        valid: set[str] | None = None
+        for comp in comps:
+            caps = _extract_captures(comp, ds_set)
+            valid = caps if valid is None else valid & caps
+        if not valid:
+            continue
+        extra = {k: v for k, v in grp_cfg.items() if k != "components"}
+        for cap in sorted(valid):
+            name = key_tmpl.replace("*", cap)
+            expanded[name] = {"components": [c.replace("*", cap) for c in comps], **extra}
+
+    expanded.update(literal)  # literal entries override glob-generated ones
+    return expanded
+
+
 def nvv(fcst, obs, reduce_dims=None, components=None, variables=None,
         eps=0.0, label=None, **_):
     """Normalized Vector Variance.
@@ -147,12 +235,19 @@ def nvv(fcst, obs, reduce_dims=None, components=None, variables=None,
 
     # ---- normalise to the grouped form ------------------------------------
     if variables is not None:
+        ds_vars = list(fcst.data_vars) if isinstance(fcst, xr.Dataset) else []
+        # Expand glob patterns (e.g. "*": {components: ["*_x", "*_y"]}).
+        needs_expansion = any(
+            "*" in k or any("*" in c for c in v.get("components", []))
+            for k, v in variables.items()
+        )
+        resolved = _expand_group_patterns(variables, ds_vars) if needs_expansion else variables
         groups = {
             grp_label: {
                 "components": grp_cfg["components"],
                 "eps": grp_cfg.get("eps", eps),
             }
-            for grp_label, grp_cfg in variables.items()
+            for grp_label, grp_cfg in resolved.items()
         }
     elif components:
         coord = label if label is not None else "+".join(components)

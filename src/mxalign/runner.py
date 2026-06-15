@@ -76,13 +76,16 @@ class Runner:
             names_ds = config_trans.pop("datasets", self.datasets.keys())
             for name in names_ds:
                 ds = self.datasets[name]
+                # Expand glob patterns / fill defaults before executing and
+                # recording, so downstream engines always see concrete names.
+                from .transformations.registry import get_expander
+                expander = get_expander(transformation)
+                resolved = expander(ds, config_trans) if expander else config_trans
                 self.datasets[name] = transform(
-                    name=transformation, datasets=ds, **config_trans
+                    name=transformation, datasets=ds, **resolved
                 )
-                # Record (transform_name, kwargs) in application order for
-                # the fused engine to replay on per-rt slices.
                 self._transforms_by_ds.setdefault(name, []).append(
-                    (transformation, dict(config_trans))
+                    (transformation, dict(resolved))
                 )
 
     def align(self):
@@ -165,6 +168,30 @@ class Runner:
                 "verify-build+exec",
                 time.perf_counter() - t_build,
                 engine="fused",
+            )
+        elif config_metrics and engine == "fused_collect":
+            from .verification_fused import compute_metrics_collect
+            log_phase_start(
+                "verify-build",
+                engine="fused_collect",
+                n_models=len(self.datasets) - 1,
+                n_metrics=len(config_metrics),
+                n_rt=int(reference.sizes.get("reference_time", -1)),
+                n_lt=int(reference.sizes.get("lead_time", -1)),
+            )
+            t_build = time.perf_counter()
+            self.metrics = compute_metrics_collect(
+                datasets=self.datasets,
+                loaders=self.loaders,
+                transforms_by_ds=self._transforms_by_ds,
+                reference_name=config["reference"],
+                metrics_cfg=config["metrics"],
+                engine_cfg=config,
+            )
+            log_phase_done(
+                "verify-build+exec",
+                time.perf_counter() - t_build,
+                engine="fused_collect",
             )
         elif config_metrics:
             log_phase_start(
