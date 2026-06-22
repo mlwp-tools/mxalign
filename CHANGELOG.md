@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-
+- Remove dataset loading and dataset validation and outsource it to [mlwp-data-loaders](https://github.com/mlwp-tools/mlwp-data-loaders) and [mlwp-data-specs](https://github.com/mlwp-tools/mlwp-data-specs) @michielv
 - Store dataset properties as netCDF-safe individual attributes while keeping read compatibility with legacy `attrs["properties"]` dict/JSON data. [\#21](https://github.com/mlwp-tools/mxalign/pull/21) @observingClouds
 - Added CI test workflow with first unit tests. [\#21](https://github.com/mlwp-tools/mxalign/pull/21) @observingClouds
 - Added optional `ifs` dependency group with `cfgrib`, `eccodes`, and `eccodeslib`. [\#21](https://github.com/mlwp-tools/mxalign/pull/21) @observingClouds

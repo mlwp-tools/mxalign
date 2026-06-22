@@ -1,14 +1,15 @@
 import xarray as xr
 import numpy as np
 
-from ..properties.properties import Time
-from ..properties.utils import properties_from_attrs, update_time_property
+from mlwp_data_specs.api import TIME_TRAIT_ATTR
+from mlwp_data_specs.specs.traits.time_coordinate import Time
+from ..utils.traits import update_time_trait
 
 
 @xr.register_dataset_accessor("time")
 class TimeAccessor:
     def __init__(self, ds):
-        self._time = properties_from_attrs(ds).time
+        self._time = ds.attrs[TIME_TRAIT_ATTR]
         self._ds = ds
 
     def is_forecast(self):
@@ -122,7 +123,7 @@ def _align_forecast_observation(
             exclude=set(ds_forecast_stacked.coords)
             | set(ds_observation.coords) - set(["valid_time"]),
         )
-    ds_forecast_aligned = update_time_property(ds_forecast_aligned, Time.OBSERVATION)
+    ds_forecast_aligned = update_time_trait(ds_forecast_aligned, Time.OBSERVATION)
     return ds_forecast_aligned, ds_observation_aligned
 
 
@@ -165,7 +166,7 @@ def _align_observation_forecast(ds_observation, ds_forecast, only_common=False):
     ds_observation_aligned = ds_observation_aligned.transpose(
         "reference_time", "lead_time", ...
     )
-    ds_observation_aligned = update_time_property(ds_observation_aligned, Time.FORECAST)
+    ds_observation_aligned = update_time_trait(ds_observation_aligned, Time.FORECAST)
     if only_common:
         return ds_observation_aligned, ds_forecast_cut
     else:
