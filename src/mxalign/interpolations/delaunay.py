@@ -1,3 +1,4 @@
+import logging
 from functools import partial
 
 import numpy as np
@@ -11,6 +12,8 @@ from .base import BaseInterpolator
 from .registry import register_interpolator
 
 from mlwp_data_specs.specs.traits.spatial_coordinate import Space
+
+logger = logging.getLogger(__name__)
 
 
 @register_interpolator
@@ -149,15 +152,22 @@ def interpolate_da(
     n_target = len(target_points)
     leading_dims = da.dims[:-1]
 
-    # Validate that grid_index is not chunked
+    # Delaunay needs the full source axis per block (every target point pulls
+    # from every source point via the sparse weight matrix). If grid_index is
+    # split across multiple chunks, rechunk to a single chunk before the matmul.
+    # ``unify_chunks`` then reconciles any leftover mismatch between the data
+    # array and its coords (e.g. when ``chunks="auto"`` produced different
+    # chunkings for reference_time on data vs. coord).
     if isinstance(da.data, dda.Array):
         grid_chunks = dict(zip(da.dims, da.chunks)).get("grid_index")
         if grid_chunks is not None and len(grid_chunks) > 1:
-            raise ValueError(
-                f"grid_index must not be chunked for Delaunay interpolation "
-                f"(found {len(grid_chunks)} chunks). Rechunk with da.chunk({{'grid_index': -1}}) "
-                f"or enforce this on the loading side."
+            logger.warning(
+                "Delaunay interpolation: rechunking grid_index from %d chunks to 1 "
+                "(required for the sparse weight matmul).",
+                len(grid_chunks),
             )
+            da = da.chunk({"grid_index": -1})
+        da = da.unify_chunks()
 
     # Build the template
     # Get chunking info for leading dims

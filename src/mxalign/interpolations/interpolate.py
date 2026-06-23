@@ -11,6 +11,8 @@ def interpolate(source_datasets, target_dataset, method, **kwargs):
     else:
         if not isinstance(source_datasets, list):
             datasets = [source_datasets]
+        else:
+            datasets = source_datasets
         keys = None
 
     if keys:
