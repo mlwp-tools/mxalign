@@ -49,3 +49,6 @@ dev = [
     "ipykernel>=7.2.0",
     "pytest>=8.0",
 ]
+
+[tool.uv.sources] 
+mlwp-data-loaders = { git = "https://github.com/mlwp-tools/mlwp-data-loaders", branch = "main" }
