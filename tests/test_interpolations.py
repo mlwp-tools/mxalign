@@ -37,7 +37,9 @@ def grid_latlon():
 @pytest.fixture
 def grid_stacked(grid_latlon):
     """grid_latlon stacked to grid_index (required by DelaunayInterpolator)."""
-    return grid_latlon.stack(grid_index=["latitude", "longitude"]).reset_index("grid_index")
+    return grid_latlon.stack(grid_index=["latitude", "longitude"]).reset_index(
+        "grid_index"
+    )
 
 
 @pytest.fixture
@@ -78,8 +80,12 @@ class TestXarrayInterpolator:
     def test_output_has_latlon_coords_from_target(self, grid_latlon, target_points):
         result = XarrayInterpolator(target_points)._interpolate(grid_latlon)
 
-        np.testing.assert_array_equal(result["latitude"].values, target_points["latitude"].values)
-        np.testing.assert_array_equal(result["longitude"].values, target_points["longitude"].values)
+        np.testing.assert_array_equal(
+            result["latitude"].values, target_points["latitude"].values
+        )
+        np.testing.assert_array_equal(
+            result["longitude"].values, target_points["longitude"].values
+        )
 
     def test_outside_domain_is_nan(self, grid_latlon):
         far_point = xr.Dataset(
@@ -119,8 +125,12 @@ class TestDelaunayInterpolator:
     def test_output_has_latlon_coords_from_target(self, grid_stacked, target_points):
         result = DelaunayInterpolator(target_points)._interpolate(grid_stacked)
 
-        np.testing.assert_array_equal(result["latitude"].values, target_points["latitude"].values)
-        np.testing.assert_array_equal(result["longitude"].values, target_points["longitude"].values)
+        np.testing.assert_array_equal(
+            result["latitude"].values, target_points["latitude"].values
+        )
+        np.testing.assert_array_equal(
+            result["longitude"].values, target_points["longitude"].values
+        )
 
     def test_weight_matrix_is_cached(self, grid_stacked, target_points):
         interp = DelaunayInterpolator(target_points)

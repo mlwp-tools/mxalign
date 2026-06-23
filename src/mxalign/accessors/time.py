@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-import xarray as xr
 
 from mlwp_data_specs.api import TIME_TRAIT_ATTR
 from mlwp_data_specs.specs.traits.time_coordinate import Time
@@ -17,7 +16,9 @@ def _add_valid_time(ds_fcst):
 
 def align_forecast_to_observation(ds_fcst, ds_obs, lead_time="shortest"):
     ds_with_vt = _add_valid_time(ds_fcst)
-    ds_stacked = ds_with_vt.stack(time=["reference_time", "lead_time"]).reset_index("time")
+    ds_stacked = ds_with_vt.stack(time=["reference_time", "lead_time"]).reset_index(
+        "time"
+    )
 
     vt_vals = ds_stacked.valid_time.values
     lt_vals = ds_stacked.lead_time.values

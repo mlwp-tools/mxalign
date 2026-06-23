@@ -77,7 +77,9 @@ def _align_time_global(ds_list, forecasts, ref_ds):
     # data — outer-aligning a coord-DataArray NaN-fills the data where the
     # index extends, but the coord itself carries the correct union.
 
-    r_star = xr.align(*[f.reference_time for f in forecasts], join="inner")[0].reference_time
+    r_star = xr.align(*[f.reference_time for f in forecasts], join="inner")[
+        0
+    ].reference_time
     l_star = xr.align(*[f.lead_time for f in forecasts], join="outer")[0].lead_time
 
     n_r = r_star.size
@@ -86,7 +88,9 @@ def _align_time_global(ds_list, forecasts, ref_ds):
         logger.warning(
             "Global time alignment: pruned %d reference_time(s) (%d → %d) "
             "whose (r + l) falls outside the reference observation's range.",
-            n_r - r_star.size, n_r, r_star.size,
+            n_r - r_star.size,
+            n_r,
+            r_star.size,
         )
 
     # xarray broadcasts r_star (reference_time) + l_star (lead_time) → 2D

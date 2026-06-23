@@ -189,16 +189,22 @@ class MxAccessor:
             Ignored for observation→* cases.
         """
         if self.is_forecast() and ds2.mx.is_observation():
-            return _time.align_forecast_to_observation(self._ds, ds2, lead_time=lead_time)
+            return _time.align_forecast_to_observation(
+                self._ds, ds2, lead_time=lead_time
+            )
         elif self.is_observation() and ds2.mx.is_forecast():
             return _time.align_observation_to_forecast(self._ds, ds2)
         elif self.is_observation() and ds2.mx.is_observation():
             return _time.align_observation_to_observation(self._ds, ds2)
         elif self.is_forecast() and ds2.mx.is_forecast():
             ff_lead_time = (
-                lead_time if lead_time in ("reference", "intersection", "union") else "reference"
+                lead_time
+                if lead_time in ("reference", "intersection", "union")
+                else "reference"
             )
-            return _time.align_forecast_to_forecast(self._ds, ds2, lead_time=ff_lead_time)
+            return _time.align_forecast_to_forecast(
+                self._ds, ds2, lead_time=ff_lead_time
+            )
         else:
             raise ValueError("Cannot align datasets with unknown time properties")
 

@@ -50,5 +50,5 @@ dev = [
     "pytest>=8.0",
 ]
 
-[tool.uv.sources] 
+[tool.uv.sources]
 mlwp-data-loaders = { git = "https://github.com/mlwp-tools/mlwp-data-loaders", branch = "main" }

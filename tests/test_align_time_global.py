@@ -165,7 +165,9 @@ class TestMultipleObservations:
         f1 = fcst(["2020-01-02", "2020-01-03"], ["0h", "6h", "12h"])
         f2 = fcst(["2020-01-02", "2020-01-03"], ["6h", "12h", "18h"])
         o1 = obs(pd.date_range("2020-01-01", "2020-01-05", freq="3h"), offset=100.0)
-        o2 = obs(pd.date_range("2020-01-02 06", "2020-01-03 18", freq="6h"), offset=200.0)
+        o2 = obs(
+            pd.date_range("2020-01-02 06", "2020-01-03 18", freq="6h"), offset=200.0
+        )
 
         out = align_time({"f1": f1, "f2": f2, "o1": o1, "o2": o2}, reference="o1")
 
@@ -195,7 +197,9 @@ class TestPairwiseFallback:
         np.testing.assert_array_equal(
             out["f1"].reference_time.values, f_ref.reference_time.values
         )
-        np.testing.assert_array_equal(out["f1"].lead_time.values, f_ref.lead_time.values)
+        np.testing.assert_array_equal(
+            out["f1"].lead_time.values, f_ref.lead_time.values
+        )
         assert out["ref"] is f_ref
 
     def test_all_observations_uses_pairwise(self):
@@ -205,7 +209,5 @@ class TestPairwiseFallback:
 
         out = align_time({"o1": o1, "o2": o2}, reference="o2")
 
-        np.testing.assert_array_equal(
-            out["o1"].valid_time.values, o2.valid_time.values
-        )
+        np.testing.assert_array_equal(out["o1"].valid_time.values, o2.valid_time.values)
         assert out["o1"].mx.is_observation()

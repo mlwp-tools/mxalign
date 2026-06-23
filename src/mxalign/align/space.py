@@ -18,7 +18,11 @@ def align_space(datasets, reference, **kwargs):
         ds_list = list(datasets.values())
         ref_ds = datasets[reference] if isinstance(reference, str) else reference
     else:
-        ds_list = [datasets] if isinstance(datasets, (xr.Dataset, xr.DataArray)) else list(datasets)
+        ds_list = (
+            [datasets]
+            if isinstance(datasets, (xr.Dataset, xr.DataArray))
+            else list(datasets)
+        )
         keys = None
         ref_ds = reference
 
