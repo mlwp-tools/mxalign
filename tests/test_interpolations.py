@@ -81,6 +81,17 @@ class TestXarrayInterpolator:
         np.testing.assert_array_equal(result["latitude"].values, target_points["latitude"].values)
         np.testing.assert_array_equal(result["longitude"].values, target_points["longitude"].values)
 
+    def test_outside_domain_is_nan(self, grid_latlon):
+        far_point = xr.Dataset(
+            coords={
+                "latitude": ("point_index", np.array([10.0])),
+                "longitude": ("point_index", np.array([10.0])),
+            },
+        )
+        result = XarrayInterpolator(far_point)._interpolate(grid_latlon)
+
+        assert np.isnan(result["temp"].isel(point_index=0).item())
+
 
 # ---------------------------------------------------------------------------
 # DelaunayInterpolator
