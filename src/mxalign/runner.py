@@ -1,11 +1,11 @@
 import os
 import xarray as xr
 
+from mlwp_data_loaders import load_and_validate_dataset
+
 from .utils.config import Config
-from .loaders.loader import load
 from .transformations.transform import transform
 from .align.time import align_time
-from .align.space import align_space
 from .align.nans import broadcast_nans
 from .utils.save import save_dataset, save_metrics
 from .verification import Metric
@@ -28,27 +28,37 @@ class Runner:
     def load_datasets(self):
         config = self.config["datasets"]
         if config is None:
-            return ValueError("No datasets section in the config.")
+            raise ValueError("No datasets section in the config.")
         for name, config_ds in config.items():
             config_ds = config_ds.copy()
-            # Check if all the files exist
             loader = config_ds.pop("loader")
             variables = config_ds.pop("variables", None)
             grid_mapping = config_ds.pop("grid_mapping", None)
+
+            raw_files = config_ds.pop("files")
+            if isinstance(raw_files, str):
+                raw_files = [raw_files]
             files = []
-            # Check if all the files exist
-            for file in config_ds.pop("files"):
+            for file in raw_files:
                 if os.path.exists(file):
                     files.append(file)
                 else:
                     print(f"File: {file} is missing, skipping.")
-            self.datasets[name] = load(
-                name=loader,
-                files=files,
-                variables=variables,
-                grid_mapping=grid_mapping,
+            dataset_path = files[0] if len(files) == 1 else files
+
+            ds = load_and_validate_dataset(
+                dataset_path,
+                loader=loader,
                 **config_ds,
             )
+
+            if variables is not None:
+                ds = ds[[variables] if isinstance(variables, str) else list(variables)]
+            if grid_mapping is not None:
+                ds = ds.mx.add_crs(grid_mapping)
+                ds = ds.mx.add_grid_mapping(grid_mapping)
+
+            self.datasets[name] = ds
 
     def transform_datasets(self):
         config = self.config["transformations"]
@@ -157,7 +167,7 @@ class Runner:
         for name, ds in self.datasets.items():
             if name != reference:
                 options = config.get(get_spatial_alignment(ds, ds_ref), {})
-                self.datasets[name] = align_space(ds, ds_ref, **options)
+                self.datasets[name] = ds.mx.align_space_with(ds_ref, **options)
 
 
 def get_spatial_alignment(ds, reference):
