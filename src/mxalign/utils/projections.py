@@ -1,50 +1,43 @@
 import cartopy.crs as ccrs
 
 
-def create_cartopy_crs(projection, kws_projection, kws_globe=None) -> ccrs.Projection:
-    """Create a Cartopy coordinate reference system (CRS) based on the specified projection.
-
-    This function creates a Cartopy projection object using the provided projection name
-    and associated keyword arguments.
+def create_cartopy_crs(
+    projection: str,
+    kws_projection: dict,
+    kws_globe: dict | None = None,
+) -> ccrs.Projection:
+    """Build a Cartopy CRS from a projection name and keyword dicts.
 
     Parameters
     ----------
-    projection : str
-        Name of the projection to create. Must be one of the supported projections
-        defined in PROJECTIONS.
-    projection_kws : dict[str, str]
-        Dictionary of keyword arguments to pass to the projection constructor.
-    globe_kws: dict[str, str], optional
-        Optional globe parameters which will be used to create a ccrs.Globe object.
+    projection:
+        Key into :data:`PROJECTIONS` (e.g. ``"lcc"``, ``"latlon"``).
+    kws_projection:
+        Keyword arguments forwarded to the projection constructor.
+    kws_globe:
+        Optional keyword arguments forwarded to :class:`cartopy.crs.Globe`.
 
-    Returns
-    -------
-    ccrs.Projection
-        The created Cartopy projection object.
     Raises
     ------
-    AssertionError
-        If the specified projection is not supported (not in PROJECTIONS).
-
-    Examples
-    --------
-    >>> projection_kws = {'central_longitude': 0,}
-    >>> globe_kws = {'ellipse': 'WGS84'}}
-    >>> crs = create_cartopy_crs('latlon', projection_kws, globe_kws)
+    ValueError
+        If ``projection`` is not a key in :data:`PROJECTIONS`.
     """
 
-    # - Get the cartopy projection (crs)
+    # - Get the cartopy projection class
     try:
-        projection = PROJECTIONS[projection]
+        proj_cls = PROJECTIONS[projection]
     except KeyError:
         raise ValueError(f"Unsupported projection: {projection}")
-    kws_projection.copy()
 
-    # - Move globe keywords to different dictionary
+    # copy projection kws to avoid mutating caller's dict
+    kws_projection = kws_projection.copy()
+
+    # - Build globe if keywords provided
+    globe = None
     if kws_globe:
         globe = ccrs.Globe(**kws_globe)
 
-    crs = projection(globe=globe, **kws_projection)
+    crs = proj_cls(globe=globe, **kws_projection)
     return crs
 
 

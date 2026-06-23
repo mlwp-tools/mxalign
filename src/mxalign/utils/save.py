@@ -1,8 +1,16 @@
+import xarray as xr
 from earthkit.data.utils.patterns import Pattern
 
 
 class DatasetPath:
-    def __init__(self, name, ds):
+    """Resolve a path pattern to a concrete file path using date components from a dataset.
+
+    The dominant year/month/day (by count) in ``reference_time`` (forecast) or
+    ``valid_time`` (observation) is used to fill ``{year}``, ``{month}``, ``{day}``
+    placeholders via :meth:`substitute`.
+    """
+
+    def __init__(self, name: str, ds: xr.Dataset) -> None:
         self.name = name
         if ds.mx.is_forecast():
             years = ds["reference_time"].groupby(ds["reference_time"].dt.year).count()
@@ -35,7 +43,8 @@ class DatasetPath:
             days = ds_day["valid_time"].groupby(ds_day["valid_time"].dt.day).count()
             self.day = int(days.isel(day=days.argmax())["day"].values)
 
-    def substitute(self, path: str):
+    def substitute(self, path: str) -> str:
+        """Expand ``path`` pattern with ``{name}``, ``{year}``, ``{month}``, ``{day}``."""
         pattern = Pattern(path)
         path = pattern.substitute(
             dict(name=self.name),
@@ -47,7 +56,8 @@ class DatasetPath:
         return path
 
 
-def save_dataset(method, name, ds, **kwargs):
+def save_dataset(method: str, name: str, ds: xr.Dataset, **kwargs) -> None:
+    """Save ``ds`` to a path derived from its dominant date using ``ds.<method>``."""
     save_fn = getattr(ds, method)
     dataset = DatasetPath(name, ds)
     path = dataset.substitute(kwargs.pop("path"))
@@ -55,7 +65,8 @@ def save_dataset(method, name, ds, **kwargs):
     save_fn(path, **kwargs)
 
 
-def save_metrics(method, ds, **kwargs):
+def save_metrics(method: str, ds: xr.Dataset, **kwargs) -> None:
+    """Save ``ds`` to a fixed path using ``ds.<method>``."""
     save_fn = getattr(ds, method)
     path = kwargs.pop("path")
     print(f"Saving to {path}")

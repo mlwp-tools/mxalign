@@ -3,6 +3,20 @@ from earthkit.data.utils.patterns import Pattern
 
 
 class Dates:
+    """Enumerate reference/valid/lead times over a regular date range.
+
+    Parameters
+    ----------
+    start, end:
+        First and last reference time of the range.
+    period:
+        Step between successive reference times (e.g. ``"1D"``).
+    range:
+        Forecast horizon — lead times run from 0 to ``range`` inclusive.
+    step:
+        Increment between lead times (e.g. ``"1h"``).
+    """
+
     def __init__(
         self,
         start: str | np.datetime64,
@@ -36,10 +50,11 @@ class Dates:
         # FIXME: can we simplify this? earthkit.data.utils.patterns.Pattern does not accept np.int64
         self.lead_times = sorted([int(t.astype(int)) for t in lead_times])
 
-    def substitute(self, path: str):
+    def substitute(self, path: str) -> list[str]:
+        """Expand ``path`` pattern over all reference times; return sorted file list."""
         pattern = Pattern(path)
         paths = pattern.substitute(
-            dict(reference_time=self.reference_times),
+            (dict(reference_time=self.reference_times),),
             # dict(lead_time=self.lead_times),
             # dict(valid_time=self.valid_times),
             allow_extra=True,
@@ -48,29 +63,7 @@ class Dates:
 
 
 def to_timedelta64(freq: str) -> np.timedelta64:
-    """
-    Convert a frequency string to a numpy timedelta64 object.
-    The frequency string should be in the format of a number followed by a time unit,
-    e.g. '1D', '2H', '3M', etc.
-    The time unit can be one of the following:
-    - 'Y' for years
-    - 'M' for months
-    - 'W' for weeks
-    - 'D' for days
-    - 'h' for hours
-    - 'm' for minutes
-    - 's' for seconds
-    - 'ms' for milliseconds
-    Parameters
-    ----------
-    freq : str
-        The frequency string to convert.
-
-    Returns
-    -------
-    np.timedelta64
-        The converted numpy timedelta64 object.
-    """
+    """Convert a frequency string such as ``"6h"`` or ``"1D"`` to :class:`numpy.timedelta64`."""
     value = freq[:-1]
     unit = freq[-1]
     return np.timedelta64(value, unit)
