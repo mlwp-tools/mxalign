@@ -13,30 +13,37 @@ from . import space as _space
 
 @xr.register_dataset_accessor("mx")
 class MxAccessor:
-    def __init__(self, ds):
+    """``ds.mx`` accessor — space/time predicates and alignment operations.
+
+    Reads ``mlwp_space_trait`` and ``mlwp_time_trait`` from ``ds.attrs`` at
+    construction time; raises ``KeyError`` if either attribute is missing.
+    """
+
+    def __init__(self, ds: xr.Dataset) -> None:
         self._space = Space(ds.attrs[SPACE_TRAIT_ATTR])
         self._time = Time(ds.attrs[TIME_TRAIT_ATTR])
         self._ds = ds
 
     # --- Space predicates ---
 
-    def is_grid(self):
+    def is_grid(self) -> bool:
         return self._space == Space.GRID
 
-    def is_point(self):
+    def is_point(self) -> bool:
         return self._space == Space.POINT
 
     # --- Time predicates ---
 
-    def is_forecast(self):
+    def is_forecast(self) -> bool:
         return self._time == Time.FORECAST
 
-    def is_observation(self):
+    def is_observation(self) -> bool:
         return self._time == Time.OBSERVATION
 
     # --- Space operations ---
 
-    def add_crs(self, crs):
+    def add_crs(self, crs: str | dict | ccrs.Projection) -> xr.Dataset:
+        """Attach a Cartopy CRS to ``ds.attrs["crs"]``; accepts a name, config dict, or CRS object."""
         if self.is_point():
             raise ValueError("Cannot add CRS to a point dataset")
         if isinstance(crs, str):
@@ -52,7 +59,8 @@ class MxAccessor:
             )
         return self._ds.assign_attrs({"crs": crs})
 
-    def add_grid_mapping(self, grid_mapping: str | dict):
+    def add_grid_mapping(self, grid_mapping: str | dict) -> xr.Dataset:
+        """Attach a grid-mapping dict to ``ds.attrs["grid_mapping"]``; accepts a builtin name or dict."""
         if self.is_point():
             raise ValueError("Cannot add grid mapping to a point dataset")
         if isinstance(grid_mapping, str):
@@ -64,12 +72,13 @@ class MxAccessor:
                 )
         return self._ds.assign_attrs({"grid_mapping": grid_mapping})
 
-    def add_xy(self, crs=None):
+    def add_xy(self, crs: str | dict | ccrs.Projection | None = None) -> xr.Dataset:
+        """Project ``longitude``/``latitude`` to ``xc``/``yc`` coordinates using the dataset CRS."""
         if crs is not None:
             self._ds = self.add_crs(crs)
 
-        crs = self._ds.attrs.get("crs", None)
-        if crs is None:
+        crs_obj = self._ds.attrs.get("crs", None)
+        if crs_obj is None:
             raise ValueError("No CRS provided and no CRS found in dataset attributes")
 
         if {"longitude", "latitude"}.issubset(self._ds.dims):
@@ -79,7 +88,7 @@ class MxAccessor:
         elif {"xc", "yc"}.issubset(self._ds.coords):
             return self._ds
         else:
-            xyz = crs.transform_points(
+            xyz = crs_obj.transform_points(
                 x=self._ds["longitude"].values,
                 y=self._ds["latitude"].values,
                 src_crs=ccrs.PlateCarree(),
@@ -96,7 +105,8 @@ class MxAccessor:
         else:
             raise ValueError("Dataset does not have expected spatial properties")
 
-    def is_stacked(self):
+    def is_stacked(self) -> bool:
+        """Return ``True`` if the spatial dims are already collapsed into ``grid_index``."""
         if {"xc", "yc"}.issubset(self._ds.dims) or {"longitude", "latitude"}.issubset(
             self._ds.dims
         ):
@@ -106,7 +116,8 @@ class MxAccessor:
         else:
             raise ValueError("Dataset does not have expected dimensions for GRID")
 
-    def stack(self):
+    def stack(self) -> xr.Dataset:
+        """Collapse 2-D spatial dims into a flat ``grid_index`` dimension."""
         if self.is_point():
             raise ValueError("POINT datasets cannot be stacked")
         if self.is_stacked():
@@ -120,7 +131,8 @@ class MxAccessor:
                 raise ValueError("Could not find correct dimensions to stack")
         return self._ds.stack({"grid_index": dims_to_stack}).reset_index("grid_index")
 
-    def unstack(self, crs=None, **kwargs):
+    def unstack(self, crs: str | dict | ccrs.Projection | None = None, **kwargs) -> xr.Dataset:
+        """Restore a flat ``grid_index`` dim to 2-D ``xc``/``yc`` using grid-mapping metadata."""
         if self.is_point():
             raise ValueError("POINT datasets cannot be unstacked")
         if not self.is_stacked():
@@ -128,9 +140,9 @@ class MxAccessor:
         else:
             if crs:
                 self._ds = self.add_crs(crs)
-            kws_mindex = dict.fromkeys(["nx", "ny", "lon_ll", "lat_ll", "dx", "dy"])
-            for key in kws_mindex.keys():
-                value = kwargs.get(key, None)
+            kws_mindex: dict[str, int | float] = {}
+            for key in ["nx", "ny", "lon_ll", "lat_ll", "dx", "dy"]:
+                value = kwargs.get(key)
                 if value is None:
                     try:
                         value = self._ds.attrs["grid_mapping"][key]
@@ -138,7 +150,12 @@ class MxAccessor:
                         raise KeyError(
                             f"Did not find a value for {key} in dataset attributes, please provide it as an argument"
                         )
-                kws_mindex[key] = value
+                if value is None:
+                    raise ValueError(f"Value for {key} cannot be None")
+                if key in ("nx", "ny"):
+                    kws_mindex[key] = int(value)
+                else:
+                    kws_mindex[key] = float(value)
 
             mindex = self._create_multiindex(**kws_mindex)
             mcoords = xr.Coordinates.from_pandas_multiindex(mindex, "grid_index")
@@ -146,7 +163,7 @@ class MxAccessor:
             ds_mindex.attrs["grid_mapping"] = kws_mindex
             return ds_mindex.unstack()
 
-    def _create_multiindex(self, nx, ny, lon_ll, lat_ll, dx, dy, **kwargs):
+    def _create_multiindex(self, nx: int, ny: int, lon_ll: float, lat_ll: float, dx: float, dy: float, **kwargs):
         from pandas import MultiIndex
 
         if self._ds.sizes["grid_index"] != nx * ny:
@@ -164,14 +181,15 @@ class MxAccessor:
 
     # --- Time operations ---
 
-    def add_valid_time(self):
+    def add_valid_time(self) -> xr.Dataset:
+        """Add a ``valid_time`` coordinate (``reference_time + lead_time``) to forecast datasets."""
         if self.is_forecast():
             return _time._add_valid_time(self._ds)
         return self._ds
 
     # --- Alignment ---
 
-    def align_time_with(self, ds2, lead_time="shortest"):
+    def align_time_with(self, ds2: xr.Dataset, lead_time: str | list | np.timedelta64 = "shortest") -> xr.Dataset:
         """Align this dataset's time axis to match ds2.
 
         Always uses "reference" semantics: self is reindexed to ds2's time
@@ -197,18 +215,21 @@ class MxAccessor:
         elif self.is_observation() and ds2.mx.is_observation():
             return _time.align_observation_to_observation(self._ds, ds2)
         elif self.is_forecast() and ds2.mx.is_forecast():
-            ff_lead_time = (
-                lead_time
-                if lead_time in ("reference", "intersection", "union")
-                else "reference"
-            )
+            if isinstance(lead_time, str) and lead_time in (
+                "reference",
+                "intersection",
+                "union",
+            ):
+                ff_lead_time = lead_time
+            else:
+                ff_lead_time = "reference"
             return _time.align_forecast_to_forecast(
                 self._ds, ds2, lead_time=ff_lead_time
             )
         else:
             raise ValueError("Cannot align datasets with unknown time properties")
 
-    def align_space_with(self, ds2, **kwargs):
+    def align_space_with(self, ds2: xr.Dataset, **kwargs) -> xr.Dataset:
         """Align this dataset's spatial grid to match ds2.
 
         Always uses "reference" semantics: self is interpolated or reindexed to

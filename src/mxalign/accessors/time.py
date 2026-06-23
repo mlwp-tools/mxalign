@@ -1,11 +1,13 @@
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 from mlwp_data_specs.api import TIME_TRAIT_ATTR
 from mlwp_data_specs.specs.traits.time_coordinate import Time
 
 
-def _add_valid_time(ds_fcst):
+def _add_valid_time(ds_fcst: xr.Dataset) -> xr.Dataset:
+    """Add a 2-D ``valid_time`` coordinate (``reference_time + lead_time``) to a forecast dataset."""
     valid_time = (
         ds_fcst["reference_time"].values[:, np.newaxis] + ds_fcst["lead_time"].values
     )
@@ -14,7 +16,12 @@ def _add_valid_time(ds_fcst):
     )
 
 
-def align_forecast_to_observation(ds_fcst, ds_obs, lead_time="shortest"):
+def align_forecast_to_observation(
+    ds_fcst: xr.Dataset,
+    ds_obs: xr.Dataset,
+    lead_time: str | list | np.timedelta64 = "shortest",
+) -> xr.Dataset:
+    """Stack ``ds_fcst`` to valid_time, deduplicate by ``lead_time`` strategy, and reindex to ``ds_obs.valid_time``."""
     ds_with_vt = _add_valid_time(ds_fcst)
     ds_stacked = ds_with_vt.stack(time=["reference_time", "lead_time"]).reset_index(
         "time"
@@ -57,7 +64,8 @@ def align_forecast_to_observation(ds_fcst, ds_obs, lead_time="shortest"):
     return ds_1d
 
 
-def align_observation_to_forecast(ds_obs, ds_fcst):
+def align_observation_to_forecast(ds_obs: xr.Dataset, ds_fcst: xr.Dataset) -> xr.Dataset:
+    """Broadcast 1-D observations onto ``(reference_time, lead_time)`` by selecting via forecast valid times."""
     ds_fcst_with_vt = _add_valid_time(ds_fcst)
     valid_time_2d = ds_fcst_with_vt["valid_time"]  # shape (reference_time, lead_time)
 
@@ -72,11 +80,13 @@ def align_observation_to_forecast(ds_obs, ds_fcst):
     return ds_out
 
 
-def align_observation_to_observation(ds1, ds2):
+def align_observation_to_observation(ds1: xr.Dataset, ds2: xr.Dataset) -> xr.Dataset:
+    """Reindex ``ds1`` to ``ds2.valid_time`` with NaN-fill for missing times."""
     return ds1.reindex(valid_time=ds2.valid_time)
 
 
-def align_forecast_to_forecast(ds1, ds2, lead_time="reference"):
+def align_forecast_to_forecast(ds1: xr.Dataset, ds2: xr.Dataset, lead_time: str = "reference") -> xr.Dataset:
+    """Reindex ``ds1`` to ``ds2.reference_time`` and align lead times per ``lead_time`` strategy."""
     ds_out = ds1.reindex(reference_time=ds2.reference_time)
 
     if lead_time == "reference":
