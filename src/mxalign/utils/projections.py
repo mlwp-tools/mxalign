@@ -87,9 +87,9 @@ BUILTIN = dict(
             semiminor_axis=6371229.0,
         ),
         kws_projection=dict(
-            central_longitude=-1.96590281, 
-            central_latitude=55.5164337, 
-            standard_parallels=[55.499996, 55.499996],
+            central_longitude=-8.0,
+            central_latitude=55.5,
+            standard_parallels=[55.5, 55.5],
         ),
         kws_grid=dict(
             lon_ll=-25.4470005, 
