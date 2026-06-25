@@ -697,3 +697,285 @@ def power_spectrum(observations, forecasts, dim_x, dim_y, res,
             per_var[f"{var}_fct"] = _spectrum(forecasts[var])
 
     return xr.Dataset(per_var)
+
+
+def taylor_diagram(observations, forecasts, dim, member_dim="member", skipna=True, valid_range=None):
+    """Taylor diagram statistics per ensemble member and ensemble mean.
+
+    For each (reference_time, lead_time) pair and each forecast field
+    (individual members + ensemble mean):
+      1. Spatial anomalies are formed by subtracting the domain mean.
+      2. Spatial std, Pearson correlation, and RMSE of anomalies are computed
+         over ``dim``.
+    Results are then averaged over reference_time (variance-preserving RMS for
+    std, arithmetic mean for correlation), yielding one triplet per
+    (lead_time, member).
+
+    The RMSE here is the RMSE of the anomaly fields — equivalent to the
+    centered RMSE (CRMSE) used in Taylor diagrams, i.e. the distance to the
+    reference point on the diagram: RMSE² = σ_f² + σ_o² − 2·R·σ_f·σ_o.
+
+    Parameters
+    ----------
+    observations : xr.Dataset
+    forecasts : xr.Dataset
+        Ensemble forecast with a ``member_dim`` dimension.
+    dim : str or list of str
+        Spatial dimension(s) to compute statistics over (e.g. ``"grid_index"``).
+        Do NOT include ``lead_time`` or ``reference_time`` here.
+    member_dim : str
+        Name of the ensemble member dimension (default: ``"member"``).
+    skipna : bool
+    valid_range : dict, optional
+        Per-variable physical bounds, e.g. ``{"2t": [150, 360]}``.
+
+    Returns
+    -------
+    xr.Dataset
+        For each variable, a DataArray with dimensions ``(stat, lead_time, member)``
+        where ``stat ∈ ["std_fct", "std_obs", "corr", "crmse"]`` and ``member``
+        contains all individual member labels plus ``"ens_mean"``.
+        ``std_obs`` is the same for all members (the reference std).
+    """
+    dim_list = [dim] if isinstance(dim, str) else list(dim)
+
+    # All members in memory at once (needed for ensemble mean); spatial dims
+    # also fully in-memory. lead_time and reference_time each get chunk=1.
+    obs_chunk = {d: -1 for d in dim_list}
+    for d in observations.dims:
+        if d not in obs_chunk:
+            obs_chunk[d] = 1
+    observations = observations.chunk(obs_chunk)
+
+    fct_chunk = {d: -1 for d in dim_list + [member_dim]}
+    for d in forecasts.dims:
+        if d not in fct_chunk:
+            fct_chunk[d] = 1
+    forecasts = forecasts.chunk(fct_chunk)
+
+    per_var = {}
+    for var in list(observations.data_vars):
+        obs_v = observations[var]
+        fct_v = forecasts[var]
+
+        obs_v = obs_v.where(np.abs(obs_v) < 1e10)
+        fct_v = fct_v.where(np.abs(fct_v) < 1e10)
+
+        if valid_range and var in valid_range:
+            vmin, vmax = valid_range[var]
+            obs_v = obs_v.where((obs_v >= vmin) & (obs_v <= vmax))
+            fct_v = fct_v.where((fct_v >= vmin) & (fct_v <= vmax))
+
+        # Observation anomaly and its variance (same for all members)
+        obs_anom = obs_v - obs_v.mean(dim=dim_list, skipna=skipna)
+        var_obs   = (obs_anom ** 2).mean(dim=dim_list, skipna=skipna)
+
+        # Determine which dims to average over (everything except lead_time)
+        time_dims = [d for d in var_obs.dims if d != "lead_time"]
+
+        # RMS-average of obs variance over time → std_obs per lead_time
+        std_obs = np.sqrt(var_obs.mean(dim=time_dims, skipna=skipna))
+
+        # Build forecast slices: one per member + ensemble mean
+        members = fct_v[member_dim].values
+        fct_slices = (
+            [(str(m), fct_v.sel({member_dim: m})) for m in members]
+            + [("ens_mean", fct_v.mean(dim=member_dim, skipna=skipna))]
+        )
+
+        member_results = []
+        for _label, fct_da in fct_slices:
+            # Drop scalar member coordinate left behind by .sel() so that stats
+            # computed from fct_da and obs_anom share the same coordinates.
+            fct_da = fct_da.drop_vars(member_dim, errors="ignore")
+            fct_anom = fct_da - fct_da.mean(dim=dim_list, skipna=skipna)
+            var_fct  = (fct_anom ** 2).mean(dim=dim_list, skipna=skipna)
+            cov      = (fct_anom * obs_anom).mean(dim=dim_list, skipna=skipna)
+
+            std_fct_t = np.sqrt(var_fct)
+            denom     = std_fct_t * np.sqrt(var_obs)
+            corr_t    = cov / denom.where(denom > 0)
+
+            std_fct = np.sqrt(var_fct.mean(dim=time_dims, skipna=skipna))
+            corr    = corr_t.mean(dim=time_dims, skipna=skipna)
+            rmse    = np.sqrt(
+                (std_fct ** 2 + std_obs ** 2 - 2 * corr * std_fct * std_obs).clip(0)
+            )
+
+            member_results.append(xr.concat(
+                [std_fct, std_obs, corr, rmse],
+                dim=xr.Variable("stat", ["std_fct", "std_obs", "corr", "crmse"])
+            ))
+
+        member_labels = [str(m) for m in members] + ["ens_mean"]
+        per_var[var] = xr.concat(
+            member_results,
+            dim=xr.Variable(member_dim, member_labels)
+        ).compute()
+
+    return xr.Dataset(per_var)
+
+
+def power_spectrum_patches(observations, forecasts, dim_x, dim_y, res,
+                            patch_size_x, patch_size_y,
+                            patch_stride_x=None, patch_stride_y=None,
+                            variables=None, n_bins=None,
+                            compute_obs=True, compute_fct=True,
+                            ref_time_chunk=50):
+    """2D isotropic power spectrum computed independently over spatial patches.
+
+    Tiles the (dim_x, dim_y) domain into patches and computes a separate
+    spectrum per patch, allowing diagnosis of spatial non-stationarity
+    (e.g. flat terrain vs mountains).  Patch layout matches the SpectralCRPS
+    patch loss used in training (patch_size, patch_stride).
+
+    Boundary patches that are smaller than patch_size are zero-padded so that
+    all patches share the same wavenumber grid.
+
+    Parameters
+    ----------
+    observations, forecasts : xr.Dataset
+        Same as power_spectrum.
+    dim_x, dim_y : int
+        Full 2-D grid shape (rows × columns).
+    res : float
+        Grid spacing in metres.
+    patch_size_x, patch_size_y : int
+        Patch size in rows and columns.  E.g. 403, 478 for a 4×4 tiling of
+        the 1609×1909 UWC-W domain.
+    patch_stride_x, patch_stride_y : int, optional
+        Stride between patches.  Defaults to patch_size (non-overlapping).
+    variables, n_bins, compute_obs, compute_fct, ref_time_chunk :
+        Same as power_spectrum.
+
+    Returns
+    -------
+    xr.Dataset
+        Same variables as power_spectrum ({var}_fct, {var}_obs) but with an
+        extra leading 'patch' dimension whose values are "p{row}_{col}".
+    """
+    _psx   = patch_size_x
+    _psy   = patch_size_y
+    _pstx  = patch_stride_x if patch_stride_x is not None else _psx
+    _psty  = patch_stride_y if patch_stride_y is not None else _psy
+
+    # Enumerate patches: (row_idx, col_idx, row0, col0, actual_rows, actual_cols)
+    patches = []
+    ri, row0 = 0, 0
+    while row0 < dim_x:
+        ci, col0 = 0, 0
+        while col0 < dim_y:
+            pr = min(_psx, dim_x - row0)
+            pc = min(_psy, dim_y - col0)
+            patches.append((ri, ci, row0, col0, pr, pc))
+            col0 += _psty
+            ci   += 1
+        row0 += _pstx
+        ri   += 1
+
+    patch_names = [f"p{ri}_{ci}" for ri, ci, *_ in patches]
+
+    # Wavenumber grid — fixed to nominal patch size so all patches share k
+    dx = dy = res
+    kx        = np.pi * np.arange(_psx) / (_psx * dx)
+    ky        = np.pi * np.arange(_psy) / (_psy * dy)
+    KX, KY    = np.meshgrid(kx, ky, indexing='ij')
+    k         = np.sqrt(KX**2 + KY**2)
+    k_max     = k.max()
+    _n_bins   = n_bins if n_bins is not None else min(_psx, _psy) // 2
+    k_edges   = np.linspace(0.0, k_max, _n_bins + 1)
+    k_centers = 0.5 * (k_edges[1:] + k_edges[:-1])
+    digitized = np.digitize(k.flatten(), k_edges)
+
+    def _field_spectrum_patch(field_1d, row0, col0, pr, pc):
+        """Spectrum of one patch; zero-pads to (_psx, _psy) if boundary patch."""
+        field_2d = field_1d.reshape(dim_x, dim_y)[row0:row0 + pr, col0:col0 + pc]
+        if np.any(np.isnan(field_2d)):
+            return None
+        if pr < _psx or pc < _psy:
+            padded = np.zeros((_psx, _psy), dtype=field_2d.dtype)
+            padded[:pr, :pc] = field_2d
+            field_2d = padded
+        P = np.abs(dctn(field_2d, type=2, norm='ortho')) ** 2
+        return np.array(
+            [P.flatten()[digitized == i].mean() if np.any(digitized == i) else 0.0
+             for i in range(1, _n_bins + 1)],
+            dtype=np.float32,
+        )
+
+    def _spectrum_patches(da):
+        lead_times = da.lead_time.values
+        ref_times  = da.reference_time.values
+        n_rt       = len(ref_times)
+        n_lt       = len(lead_times)
+        n_patches  = len(patches)
+        has_member = "member" in da.dims
+        members    = da.member.values if has_member else None
+        n_mbr      = len(members) if has_member else 1
+
+        grid_dim = next(d for d in da.dims if d not in ("reference_time", "lead_time", "member"))
+
+        if has_member:
+            da  = da.transpose("reference_time", "lead_time", grid_dim, "member")
+            out = np.full((n_patches, n_rt, n_lt, n_mbr, _n_bins), np.nan, dtype=np.float32)
+        else:
+            da  = da.transpose("reference_time", "lead_time", grid_dim)
+            out = np.full((n_patches, n_rt, n_lt, _n_bins), np.nan, dtype=np.float32)
+
+        for lt_idx in range(n_lt):
+            da_lt = da.isel(lead_time=lt_idx)
+            for t_start in range(0, n_rt, ref_time_chunk):
+                t_end = min(t_start + ref_time_chunk, n_rt)
+                chunk = da_lt.isel(reference_time=slice(t_start, t_end)).load().values
+                if chunk.ndim == 1:
+                    chunk = chunk[np.newaxis, :]
+                for t in range(chunk.shape[0]):
+                    for pi, (_, _, row0, col0, pr, pc) in enumerate(patches):
+                        if has_member:
+                            for m_idx in range(n_mbr):
+                                s = _field_spectrum_patch(chunk[t, :, m_idx], row0, col0, pr, pc)
+                                if s is not None:
+                                    out[pi, t_start + t, lt_idx, m_idx] = s
+                        else:
+                            s = _field_spectrum_patch(chunk[t], row0, col0, pr, pc)
+                            if s is not None:
+                                out[pi, t_start + t, lt_idx] = s
+
+        patch_coord = xr.Variable("patch", patch_names)
+        if has_member:
+            return xr.DataArray(
+                out,
+                dims=["patch", "reference_time", "lead_time", "member", "k"],
+                coords={"patch": patch_coord, "reference_time": ref_times,
+                        "lead_time": lead_times, "member": members, "k": k_centers},
+            )
+        return xr.DataArray(
+            out,
+            dims=["patch", "reference_time", "lead_time", "k"],
+            coords={"patch": patch_coord, "reference_time": ref_times,
+                    "lead_time": lead_times, "k": k_centers},
+        )
+
+    if variables is not None:
+        if compute_obs:
+            observations = observations[variables]
+        if compute_fct:
+            forecasts    = forecasts[variables]
+
+    n_row = ri
+    n_col = patches[-1][1] + 1
+    print(f"  power_spectrum_patches: {n_row}×{n_col} = {len(patches)} patches "
+          f"of nominal size {_psx}×{_psy}", flush=True)
+
+    iter_vars = list(observations.data_vars) if not compute_fct else list(forecasts.data_vars)
+
+    per_var = {}
+    for var in iter_vars:
+        if compute_obs:
+            print(f"  power_spectrum_patches: {var} obs ...", flush=True)
+            per_var[f"{var}_obs"] = _spectrum_patches(observations[var])
+        if compute_fct:
+            print(f"  power_spectrum_patches: {var} fct ...", flush=True)
+            per_var[f"{var}_fct"] = _spectrum_patches(forecasts[var])
+
+    return xr.Dataset(per_var)
