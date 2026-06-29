@@ -1,20 +1,38 @@
+from collections.abc import Callable
+
+import xarray as xr
+
 from .registry import register_transformation
 
 
 @register_transformation("external")
-def transform(ds, func_path, inputs, output, **kwargs):
+def transform(
+    ds: xr.Dataset,
+    func_path: str,
+    inputs: dict[str, str],
+    output: str,
+    **kwargs,
+) -> xr.Dataset:
+    """Call an external function and store its result as ``output`` in ``ds``.
+
+    Parameters
+    ----------
+    func_path:
+        Dotted path to the function, e.g. ``"mypackage.module.func"``.
+    inputs:
+        Mapping of function argument names to variable names in ``ds``.
+    output:
+        Name of the new variable written back into ``ds``.
+    """
     func = _resolve_function(func_path)
-
     input_kwargs = {arg_name: ds[var_name] for arg_name, var_name in inputs.items()}
-
-    all_kwargs = {**input_kwargs, **kwargs}
-    result = func(**all_kwargs)
-    # print(result)
+    result = func(**{**input_kwargs, **kwargs})
     ds[output] = (ds.dims, result)
     return ds
 
 
-def _resolve_function(func_path):
+def _resolve_function(func_path: str) -> Callable:
+    """Import and return the callable at ``func_path`` (e.g. ``"pkg.module.func"``)."""
     import importlib
 
     module_path, func_name = func_path.rsplit(".", 1)

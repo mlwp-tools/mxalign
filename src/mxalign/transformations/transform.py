@@ -1,7 +1,15 @@
+import xarray as xr
+
 from .registry import get_transformation
 
 
-def transform(name, datasets, *args, **kwargs):
+def transform(
+    name: str,
+    datasets: xr.Dataset | list[xr.Dataset] | dict[str, xr.Dataset],
+    *args,
+    **kwargs,
+) -> xr.Dataset | list[xr.Dataset] | dict[str, xr.Dataset]:
+    """Apply the named transformation to one or more datasets; returns the same container type."""
     transform = get_transformation(name)
     if isinstance(datasets, dict):
         keys = list(datasets.keys())
