@@ -22,16 +22,16 @@ class DelaunayInterpolator(BaseInterpolator):
     source_space = Space.GRID
     target_space = Space.POINT
 
-    def __init__(self, target_dataset, **options):
+    def __init__(self, target_dataset: xr.Dataset, **options) -> None:
         super().__init__(target_dataset, **options)
         method = self.options.get("method", "linear")
-        self._W_cache = {}  # keyed by source grid hash
+        self._W_cache: dict = {}  # keyed by source grid hash
         if method != "linear":
             raise ValueError(
                 f"Method: {method}. Delaunay interpolation only supports linear interpolation"
             )
 
-    def _get_weights(self, source_points, target_points):
+    def _get_weights(self, source_points: np.ndarray, target_points: np.ndarray) -> csr_matrix:
         key = (
             source_points.shape,
             source_points[0, 0],
@@ -44,7 +44,7 @@ class DelaunayInterpolator(BaseInterpolator):
             )
         return self._W_cache[key]
 
-    def _interpolate(self, source_dataset):
+    def _interpolate(self, source_dataset: xr.Dataset) -> xr.Dataset:
         if "grid_index" not in source_dataset.dims:
             raise NotImplementedError(
                 "Delaunay interpolation currently only supports stacked grids"
@@ -94,13 +94,7 @@ def _build_weight_matrix(
     source_points: np.ndarray,
     target_points: np.ndarray,
 ) -> csr_matrix:
-    """
-    Precompute a sparse (n_target, n_source) weight matrix from the triangulation.
-
-    Applying W to a (n_source,) value vector gives (n_target,) interpolated values
-    via a simple sparse matrix multiply. Target points outside the convex hull
-    receive NaN weights.
-    """
+    """Build a sparse ``(n_target, n_source)`` barycentric weight matrix; points outside the convex hull get NaN weights."""
 
     print("Calculating interpolation-weight matrix")
 
@@ -149,6 +143,7 @@ def _build_weight_matrix(
 def interpolate_da(
     da: xr.DataArray, W: csr_matrix, target_points: np.ndarray
 ) -> xr.DataArray:
+    """Apply weight matrix ``W`` to ``da`` over its ``grid_index`` dim, returning a ``point_index`` DataArray."""
     n_target = len(target_points)
     leading_dims = da.dims[:-1]
 
@@ -207,6 +202,7 @@ def interpolate_block(
     W: csr_matrix,
     target_points: np.ndarray,
 ) -> xr.DataArray:
+    """Single-block sparse matmul used by ``map_blocks`` inside ``interpolate_da``."""
     data = block.values  # shape = (.., npoints)
     original_shape = data.shape[:-1]
     data_flat = data.reshape(

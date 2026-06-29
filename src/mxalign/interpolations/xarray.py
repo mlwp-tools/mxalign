@@ -11,8 +11,7 @@ class XarrayInterpolator(BaseInterpolator):
     source_space = Space.GRID
     target_space = Space.POINT
 
-    def _interpolate(self, source_dataset):
-
+    def _interpolate(self, source_dataset: xr.Dataset) -> xr.Dataset:
         if "latitude" in source_dataset.dims and "longitude" in source_dataset.dims:
             ds_out = self._interpolate_from_latlon(source_dataset)
 
@@ -27,7 +26,8 @@ class XarrayInterpolator(BaseInterpolator):
             ds_out = self._interpolate_from_xcyc(source_dataset)
         return ds_out
 
-    def _interpolate_from_xcyc(self, source_dataset):
+    def _interpolate_from_xcyc(self, source_dataset: xr.Dataset) -> xr.Dataset:
+        """Interpolate a projected (xc/yc) source to target lon/lat points."""
         import cartopy.crs as ccrs
 
         try:
@@ -42,7 +42,6 @@ class XarrayInterpolator(BaseInterpolator):
         )
 
         x = xr.DataArray(xyz[:, 0], dims="point_index")
-
         y = xr.DataArray(xyz[:, 1], dims="point_index")
 
         ds_out = source_dataset.interp(xc=x, yc=y, **self.options)
@@ -52,11 +51,11 @@ class XarrayInterpolator(BaseInterpolator):
         )
         return ds_out
 
-    def _interpolate_from_latlon(self, source_dataset):
+    def _interpolate_from_latlon(self, source_dataset: xr.Dataset) -> xr.Dataset:
+        """Interpolate a lat/lon-dim source directly to target lon/lat points."""
         longitude = self.target_dataset["longitude"]
         latitude = self.target_dataset["latitude"]
         ds_out = source_dataset.interp(
             longitude=longitude, latitude=latitude, **self.options
         )
-
         return ds_out

@@ -1,7 +1,15 @@
+import xarray as xr
+
 from .registry import get_interpolation
 
 
-def interpolate(source_datasets, target_dataset, method, **kwargs):
+def interpolate(
+    source_datasets: xr.Dataset | list[xr.Dataset] | dict[str, xr.Dataset],
+    target_dataset: xr.Dataset,
+    method: str,
+    **kwargs,
+) -> xr.Dataset | list[xr.Dataset] | dict[str, xr.Dataset]:
+    """Interpolate one or more source datasets to ``target_dataset`` using the named interpolator."""
     interp_cls = get_interpolation(method)
     interpolator = interp_cls(target_dataset, **kwargs)
 
