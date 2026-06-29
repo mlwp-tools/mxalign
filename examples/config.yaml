@@ -7,17 +7,17 @@ dates:
 
 datasets:
   la-1024-ea-00:
-    loader: anemoi-inference
+    loader: mlwp_data_loaders.loaders.anemoi.anemoi_inference
     files: /scratch/project_465000527/vandenbl/sg-la-comparison/inference-out/la-1024-01-ea-00/{reference_time:strftime(%Y%m%d%H)}.nc
     #grid_mapping: CERRA
     variables: ["2t","10u","10v","msl"]
   cerra:
-    loader: anemoi-datasets
+    loader: mlwp_data_loaders.loaders.anemoi.anemoi_datasets
     files: /scratch/project_465002133/datasets/cerra-rr-an-oper-0001-mars-5p5km-1984-2020-3h-v2-rmi.zarr
     #grid_mapping: CERRA
     variables: ["2t_2", "10u_10", "10v_10", "msl_0"]
   # synop:
-  #   loader: mxalign
+  #   loader: ./myloader.py
   #   files: /scratch/project_465002133/datasets/observations/cerra_synops_2020.nc
   #   variables: ["2t","10si","msl"]
 transformations:
