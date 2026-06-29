@@ -5,6 +5,7 @@ _TRANSFORMATION_REGISTRY: dict[str, Callable] = {}
 
 def register_transformation(name: str) -> Callable:
     """Decorator that registers a transformation function under ``name``."""
+
     def decorator(func: Callable) -> Callable:
         _TRANSFORMATION_REGISTRY[name] = func
         return func

@@ -25,7 +25,9 @@ def align_grid_grid(ds1: xr.Dataset, ds2: xr.Dataset, **kwargs) -> xr.Dataset:
         raise NotImplementedError("Regridding not implemented")
 
 
-def align_grid_point(ds1: xr.Dataset, ds2: xr.Dataset, method: str = "xarray", **kwargs) -> xr.Dataset:
+def align_grid_point(
+    ds1: xr.Dataset, ds2: xr.Dataset, method: str = "xarray", **kwargs
+) -> xr.Dataset:
     """Interpolate grid ``ds1`` to the point locations of ``ds2`` using the named interpolator."""
     from ..interpolations.registry import get_interpolation
 

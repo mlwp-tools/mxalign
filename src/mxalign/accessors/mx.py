@@ -131,7 +131,9 @@ class MxAccessor:
                 raise ValueError("Could not find correct dimensions to stack")
         return self._ds.stack({"grid_index": dims_to_stack}).reset_index("grid_index")
 
-    def unstack(self, crs: str | dict | ccrs.Projection | None = None, **kwargs) -> xr.Dataset:
+    def unstack(
+        self, crs: str | dict | ccrs.Projection | None = None, **kwargs
+    ) -> xr.Dataset:
         """Restore a flat ``grid_index`` dim to 2-D ``xc``/``yc`` using grid-mapping metadata."""
         if self.is_point():
             raise ValueError("POINT datasets cannot be unstacked")
@@ -163,7 +165,16 @@ class MxAccessor:
             ds_mindex.attrs["grid_mapping"] = kws_mindex
             return ds_mindex.unstack()
 
-    def _create_multiindex(self, nx: int, ny: int, lon_ll: float, lat_ll: float, dx: float, dy: float, **kwargs):
+    def _create_multiindex(
+        self,
+        nx: int,
+        ny: int,
+        lon_ll: float,
+        lat_ll: float,
+        dx: float,
+        dy: float,
+        **kwargs,
+    ):
         from pandas import MultiIndex
 
         if self._ds.sizes["grid_index"] != nx * ny:
@@ -189,7 +200,9 @@ class MxAccessor:
 
     # --- Alignment ---
 
-    def align_time_with(self, ds2: xr.Dataset, lead_time: str | list | np.timedelta64 = "shortest") -> xr.Dataset:
+    def align_time_with(
+        self, ds2: xr.Dataset, lead_time: str | list | np.timedelta64 = "shortest"
+    ) -> xr.Dataset:
         """Align this dataset's time axis to match ds2.
 
         Always uses "reference" semantics: self is reindexed to ds2's time

@@ -31,7 +31,9 @@ class DelaunayInterpolator(BaseInterpolator):
                 f"Method: {method}. Delaunay interpolation only supports linear interpolation"
             )
 
-    def _get_weights(self, source_points: np.ndarray, target_points: np.ndarray) -> csr_matrix:
+    def _get_weights(
+        self, source_points: np.ndarray, target_points: np.ndarray
+    ) -> csr_matrix:
         key = (
             source_points.shape,
             source_points[0, 0],
