@@ -71,7 +71,11 @@ def align_time(
     return aligned[0] if len(aligned) == 1 else aligned
 
 
-def _align_time_global(ds_list, forecasts, ref_ds):
+def _align_time_global(
+    ds_list: list[xr.Dataset],
+    forecasts: list[xr.Dataset],
+    ref_ds: xr.Dataset,
+) -> list[xr.Dataset]:
     # R* = intersection of reference_time, L* = union of lead_time.
     # Pull the aligned *coord* (= the merged index) rather than the array's
     # data — outer-aligning a coord-DataArray NaN-fills the data where the
@@ -110,7 +114,11 @@ def _align_time_global(ds_list, forecasts, ref_ds):
     return aligned
 
 
-def _constrain_to_reference(r_star, l_star, ref_vt):
+def _constrain_to_reference(
+    r_star: xr.DataArray,
+    l_star: xr.DataArray,
+    ref_vt: xr.DataArray,
+) -> xr.DataArray:
     """Drop ref_times whose ``(r + l)`` falls outside the reference range.
 
     A ref_time ``r`` is kept only when every ``l ∈ L*`` yields a valid_time

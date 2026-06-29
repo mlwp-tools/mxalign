@@ -1,17 +1,22 @@
 import xarray as xr
 
 
-def align_space(datasets, reference, **kwargs):
+def align_space(
+    datasets: xr.Dataset | list[xr.Dataset] | dict[str, xr.Dataset],
+    reference: str | xr.Dataset,
+    **kwargs,
+) -> xr.Dataset | list[xr.Dataset] | dict[str, xr.Dataset]:
     """Align all datasets spatially to a reference dataset.
 
-    Each non-reference dataset is aligned by calling ``ds.mx.align_space_with(ref_ds)``.
+    Each non-reference dataset is aligned via ``ds.mx.align_space_with(ref_ds)``.
     Extra kwargs are forwarded to ``align_space_with`` (e.g. ``method``).
 
     Parameters
     ----------
-    datasets : xr.Dataset, list, or dict of xr.Dataset
-    reference : str or xr.Dataset
-        Key into *datasets* dict, or an xr.Dataset to align to.
+    datasets:
+        Single dataset, list, or dict of datasets to align.
+    reference:
+        Key into *datasets* dict, or a dataset to align to.
     """
     if isinstance(datasets, dict):
         keys = list(datasets.keys())

@@ -2,37 +2,12 @@ import xarray as xr
 import itertools
 
 
-def broadcast_nans(datasets: dict | list) -> None:
-    """
-    Broadcasts NaN values across a list of xarray Datasets by ensuring that if a value is NaN
-    in one dataset at a specific coordinate, it becomes NaN in all datasets at that coordinate.
+def broadcast_nans(
+    datasets: xr.Dataset | list[xr.Dataset] | dict[str, xr.Dataset],
+) -> xr.Dataset | list[xr.Dataset] | dict[str, xr.Dataset]:
+    """Propagate NaN masks across all datasets so a NaN at any coordinate is NaN in all.
 
-    Parameters
-    ----------
-    datasets : list[xr.Dataset] | dict[str, xr.Dataset]
-        A list of xarray Datasets to process. The datasets should share some common
-        coordinates and variables.
-
-    Returns
-    -------
-    list[xr.Dataset] | dict[str, xr.Dataset]
-
-
-    Notes
-    -----
-    - The function operates on pairs of datasets, comparing each dataset with every other dataset
-      in the list.
-    - Only coordinate values that exist in both datasets of a pair are considered.
-    - Only variables that exist in both datasets of a pair are processed.
-    - The NaN broadcasting is performed at the intersection of coordinates between each pair
-      of datasets.
-
-    Examples
-    --------
-    >>> ds1 = xr.Dataset(...)
-    >>> ds2 = xr.Dataset(...)
-    >>> ds3 = xr.Dataset(...)
-    >>> broadcast_nans([ds1, ds2, ds3])
+    Operates pairwise over deep copies; only shared coordinates and variables are considered.
     """
 
     if isinstance(datasets, xr.Dataset):
