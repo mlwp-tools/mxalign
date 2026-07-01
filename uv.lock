@@ -537,15 +537,15 @@ wheels = [
 
 [[package]]
 name = "earthkit-meteo"
-version = "0.6.1"
+version = "0.6.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "earthkit-utils" },
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/43/89/324733e6b2a02d4c336e4579c8899d301ba3b576a8a540071cd095b38183/earthkit_meteo-0.6.1.tar.gz", hash = "sha256:82a89983c8ed9302ca07fc040c2787033c98188ce75fe9332f5ca7808379c60e", size = 370291, upload-time = "2026-02-18T16:04:11.567Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/14/87/162771cba3c4371e054914750164851e32bafe924c674153105789f01c88/earthkit_meteo-0.6.2.tar.gz", hash = "sha256:2823ed56947dd2c9c69aae6fe19153eec393c80392126ab84cc760419d0b952b", size = 370304, upload-time = "2026-03-31T09:40:37.609Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/34/eb/c10deda542516f679a20f1cb641a13094fc9e80bc13e54f4cebcfb9f8173/earthkit_meteo-0.6.1-py3-none-any.whl", hash = "sha256:fcb425e23d1827d2fd85ad4b31bfd41eb8f1dcfc7fb78da4b03d69037e8e1d49", size = 57080, upload-time = "2026-02-18T16:04:10.074Z" },
+    { url = "https://files.pythonhosted.org/packages/86/d3/988c1807b315a71cb4f6e5b2b739b115246083dc678b50fa9ff97c8a417a/earthkit_meteo-0.6.2-py3-none-any.whl", hash = "sha256:7380464a3a62422d4027bcfc20fbd4ee3a7bfc51eb1f89d1a5027f24c7f32a4d", size = 57004, upload-time = "2026-03-31T09:40:36.633Z" },
 ]
 
 [[package]]
