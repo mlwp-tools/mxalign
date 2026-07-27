@@ -7,11 +7,13 @@ from .interpolations.interpolate import interpolate
 from .interpolations.registry import available_interpolations, register_interpolator
 from .align.time import align_time
 from .align.space import align_space
+from .verification import fused_metric, get_fused_kernel
 
 from . import accessors
 from . import loaders
 from . import transformations
 from . import interpolations
+from . import scores
 
 __all__ = [
     "Properties",
@@ -29,8 +31,11 @@ __all__ = [
     "register_interpolator",
     "align_time",
     "align_space",
+    "fused_metric",
+    "get_fused_kernel",
     "accessors",
     "loaders",
     "transformations",
     "interpolations",
+    "scores",
 ]

@@ -1,3 +1,4 @@
+import numpy as np
 import yaml
 
 from .dates import Dates
@@ -52,4 +53,25 @@ class Config:
             if dates:
                 dates = Dates(**dates)
                 loader["files"] = dates.substitute(loader["files"])
+                # Propagate declarative time hints to every loader.
+                # BaseLoader.load() uses these to pre-prune datasets:
+                #   - `valid_times` prunes observation datasets (1D dim).
+                #   - `reference_times` + `lead_times` prune forecast
+                #     datasets rectangularly, enforcing `dates.range`
+                #     (max lead) and `dates.period` (rt spacing).
+                loader.setdefault(
+                    "valid_times",
+                    np.sort(np.array(dates.valid_times)),
+                )
+                loader.setdefault(
+                    "reference_times",
+                    np.sort(np.array(dates.reference_times)),
+                )
+                loader.setdefault(
+                    "lead_times",
+                    # dates.lead_times strips unit info (stored as plain ints).
+                    # Reconstruct from _step/_range to keep the timedelta64 unit
+                    # so that BaseLoader can cast correctly to the dataset dtype.
+                    np.arange(int(dates._range / dates._step) + 1) * dates._step,
+                )
             self.config["datasets"][key] = loader
