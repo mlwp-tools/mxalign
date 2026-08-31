@@ -699,6 +699,439 @@ def power_spectrum(observations, forecasts, dim_x, dim_y, res,
     return xr.Dataset(per_var)
 
 
+_MURPHY_STATS = [
+    "N", "f_mean", "o_mean", "sigma_f", "sigma_o", "r",
+    "bias", "spread", "corr", "ratio", "mse", "identity_residual",
+]
+
+#: Station-metadata coordinates carried through from the observation dataset.
+_STATION_COORDS = ("code", "latitude", "longitude", "altitude")
+
+
+def _drop_nondim_coords(da):
+    """Strip non-dimension coordinates so concat along a new dim can't conflict.
+
+    Forecast and observation datasets carry different point_index coordinates
+    (obs has ``code``/``altitude``, the delaunay-interpolated forecast only has
+    ``latitude``/``longitude``), so statistics derived from each side disagree
+    on coords.  They are stripped here and reattached once, from the
+    observations, in ``murphy_decomposition``.
+    """
+    return da.drop_vars([c for c in da.coords if c not in da.dims], errors="ignore")
+
+
+def murphy_decomposition(observations, forecasts, dim="reference_time",
+                         valid_range=None, member_dim="member",
+                         check_identity=True, identity_rtol=1e-6,
+                         identity_atol=1e-8):
+    """Per-station Murphy decomposition of MSE into bias / spread / correlation.
+
+    For each station ``j`` independently, using only that station's valid
+    (forecast, observation) pairs::
+
+        bias_j   = (f̄_j - ō_j)²
+        spread_j = (σ_f,j - σ_o,j)²
+        corr_j   = 2·σ_f,j·σ_o,j·(1 - r_j)
+        MSE_j    = bias_j + spread_j + corr_j        (exact identity)
+
+    The decomposition separates *systematic offset* (bias), *variance
+    mismatch* (spread) and *phase/timing error* (corr).  Its purpose here is
+    to diagnose whether a model scores well because of genuine skill or
+    because it is over-smoothed: a damped-variance model shows
+    ``ratio = σ_f/σ_o < 1`` and a large ``spread`` term while its ``corr``
+    term stays low.
+
+    **Deterministic forecasts only.**  A forecast carrying ``member_dim`` is
+    rejected rather than silently collapsed — pick the ensemble mean or a
+    single member explicitly in the config instead.
+
+    Aggregation across stations is deliberately NOT done here — see
+    ``code/aggregate_murphy_results.py``.  Keeping this function purely
+    per-station means the (subjective) ``min_obs_per_station`` cutoff can be
+    re-tuned without re-running the expensive alignment/verification step.
+
+    Parameters
+    ----------
+    observations : xr.Dataset
+        Reference dataset, dims (..., ``dim``, point_index).
+    forecasts : xr.Dataset
+        Deterministic forecast, aligned onto the same point_index.
+    dim : str or list of str
+        Dimension(s) to reduce over when forming each station's sample —
+        typically ``"reference_time"``.  The spatial dimension must NOT be
+        listed here; that is what makes the result per-station.
+    valid_range : dict, optional
+        Per-variable physical bounds, e.g. ``{"2t": [150, 360]}``.  Applied on
+        top of the generic fill-value mask (``abs > 1e10``), same convention as
+        ``mse_by_domain`` / ``spread_skill``.
+    member_dim : str
+        Ensemble dimension name whose presence is an error (default "member").
+    check_identity : bool
+        Verify ``bias + spread + corr == MSE`` to floating-point tolerance and
+        raise if violated (default True).
+    identity_rtol, identity_atol : float
+        Tolerances for that check.
+
+    Returns
+    -------
+    xr.Dataset
+        One variable per input variable, each with an extra ``stat`` dimension
+        taking the values ``N, f_mean, o_mean, sigma_f, sigma_o, r, bias,
+        spread, corr, ratio, mse, identity_residual`` and retaining
+        ``lead_time`` and ``point_index``.  Station metadata (``code``,
+        ``latitude``, ``longitude``, ``altitude``) is preserved as point_index
+        coordinates for later stratification by elevation/region.
+
+    Notes
+    -----
+    **Population moments (ddof=0) are used deliberately, not sample moments.**
+    The identity ``MSE = bias + spread + corr`` holds exactly only when σ_f,
+    σ_o and the covariance behind ``r`` share the same ``÷N`` normalisation.
+    With ddof=1 the three terms miss MSE by a systematic factor ~N/(N-1) —
+    about 5% at N=20 — which would defeat the identity check above.  Sample
+    standard deviations are therefore intentionally not offered here.
+
+    ``corr`` is evaluated as ``2·(σ_f·σ_o - cov)``, which is algebraically
+    identical to ``2·σ_f·σ_o·(1 - r)`` but stays finite when a station's
+    series is constant (σ = 0, ``r`` undefined).  The decomposition therefore
+    remains exact for degenerate stations while ``r`` itself is reported NaN.
+
+    ``N`` is stored as a float (the ``stat`` dimension is homogeneous);
+    it is an exact integer count of jointly-valid pairs.
+    """
+    dim_list = [dim] if isinstance(dim, str) else list(dim)
+
+    if member_dim in forecasts.dims:
+        raise ValueError(
+            f"murphy_decomposition is a deterministic metric but the forecast "
+            f"has an ensemble dimension '{member_dim}' of size "
+            f"{forecasts.sizes[member_dim]}. Reduce it explicitly first (e.g. "
+            f"ensemble mean, or select one member) rather than relying on this "
+            f"metric to choose for you."
+        )
+
+    # The whole point is a per-station sample, so the spatial dim must survive.
+    spatial_dims = [d for d in ("point_index", "grid_index") if d in observations.dims]
+    for d in dim_list:
+        if d in spatial_dims:
+            raise ValueError(
+                f"dim={dim!r} includes the spatial dimension '{d}', which would "
+                f"pool stations together and defeat the per-station design. "
+                f"Use dim=['reference_time'] and aggregate afterwards with "
+                f"code/aggregate_murphy_results.py."
+            )
+    if not spatial_dims:
+        print("  murphy_decomposition: no point_index/grid_index dimension found — "
+              "results will not be per-station.", flush=True)
+
+    per_var = {}
+    for var in list(observations.data_vars):
+        if var not in forecasts.data_vars:
+            print(f"  murphy_decomposition: '{var}' not in forecasts — skipping.", flush=True)
+            continue
+
+        obs_v = observations[var]
+        fct_v = forecasts[var]
+
+        # Mask unphysical fill values (e.g. 9.96921e+36 from zarr/netCDF)
+        obs_v = obs_v.where(np.abs(obs_v) < 1e10)
+        fct_v = fct_v.where(np.abs(fct_v) < 1e10)
+
+        if valid_range and var in valid_range:
+            vmin, vmax = valid_range[var]
+            obs_v = obs_v.where((obs_v >= vmin) & (obs_v <= vmax))
+            fct_v = fct_v.where((fct_v >= vmin) & (fct_v <= vmax))
+
+        # Joint mask: a pair counts only if BOTH sides are valid, so every
+        # moment below is computed over the identical sample.  Obs coverage is
+        # highly variable here (tp reports at 00/12Z only for most stations),
+        # so this is what makes N_j meaningful.
+        valid = obs_v.notnull() & fct_v.notnull()
+        obs_v = obs_v.where(valid)
+        fct_v = fct_v.where(valid)
+
+        # Promote to float64 before accumulating moments. The decomposition
+        # differences large, similar numbers (f̄ ≈ ō ≈ 280 K for 2t), so in
+        # float32 the identity residual lands around 1e-5 -- larger than MSE
+        # itself times the check tolerance, i.e. the identity check would fail
+        # on precision alone. Cheap here: point obs are ~2131 stations, not a
+        # 3M-cell grid.
+        obs_v = obs_v.astype("float64")
+        fct_v = fct_v.astype("float64")
+
+        n = valid.sum(dim=dim_list)
+
+        f_mean = fct_v.mean(dim=dim_list, skipna=True)
+        o_mean = obs_v.mean(dim=dim_list, skipna=True)
+
+        fa = fct_v - f_mean
+        oa = obs_v - o_mean
+
+        # skipna means each of these divides by the same count n -> ddof=0
+        var_f = (fa ** 2).mean(dim=dim_list, skipna=True)
+        var_o = (oa ** 2).mean(dim=dim_list, skipna=True)
+        cov   = (fa * oa).mean(dim=dim_list, skipna=True)
+
+        sigma_f = np.sqrt(var_f)
+        sigma_o = np.sqrt(var_o)
+
+        mse    = ((fct_v - obs_v) ** 2).mean(dim=dim_list, skipna=True)
+        bias   = (f_mean - o_mean) ** 2
+        spread = (sigma_f - sigma_o) ** 2
+        # == 2*sigma_f*sigma_o*(1-r), but finite when either sigma is 0
+        corr   = 2.0 * (sigma_f * sigma_o - cov)
+
+        denom = sigma_f * sigma_o
+        r     = cov / denom.where(denom > 0)
+        ratio = sigma_f / sigma_o.where(sigma_o > 0)
+
+        residual = bias + spread + corr - mse
+
+        stats = {
+            "N": n.astype("float64"), "f_mean": f_mean, "o_mean": o_mean,
+            "sigma_f": sigma_f, "sigma_o": sigma_o, "r": r,
+            "bias": bias, "spread": spread, "corr": corr,
+            "ratio": ratio, "mse": mse, "identity_residual": residual,
+        }
+        assert list(stats) == _MURPHY_STATS, "stat ordering drifted from _MURPHY_STATS"
+
+        per_var[var] = xr.concat(
+            [_drop_nondim_coords(stats[s]) for s in _MURPHY_STATS],
+            dim=xr.Variable("stat", _MURPHY_STATS),
+        ).compute()
+
+    result = xr.Dataset(per_var)
+
+    # Reattach station metadata (dropped above so the concat can't conflict).
+    station_coords = {
+        c: observations.coords[c]
+        for c in _STATION_COORDS
+        if c in observations.coords and set(observations.coords[c].dims) <= set(result.dims)
+    }
+    if station_coords:
+        result = result.assign_coords(station_coords)
+
+    if check_identity:
+        _check_murphy_identity(result, rtol=identity_rtol, atol=identity_atol)
+
+    return result
+
+
+def _check_murphy_identity(result, rtol=1e-6, atol=1e-8):
+    """Raise if bias + spread + corr departs from MSE beyond tolerance."""
+    for var in result.data_vars:
+        da  = result[var]
+        res = da.sel(stat="identity_residual").values
+        mse = da.sel(stat="mse").values
+        finite = np.isfinite(res) & np.isfinite(mse)
+        if not finite.any():
+            continue
+        tol  = atol + rtol * np.abs(mse[finite])
+        bad  = np.abs(res[finite]) > tol
+        if bad.any():
+            worst = np.abs(res[finite])[bad].max()
+            raise ValueError(
+                f"murphy_decomposition: MSE identity violated for '{var}' at "
+                f"{int(bad.sum())}/{int(finite.sum())} (station, lead_time) points; "
+                f"max |bias+spread+corr-MSE| = {worst:.3e}. This indicates a bug in "
+                f"the decomposition, not a data problem."
+            )
+
+
+def murphy_decomposition_domain_mean(observations, forecasts,
+                                     dim=("reference_time", "grid_index"),
+                                     valid_range=None, member_dim="member",
+                                     check_identity=True, identity_rtol=1e-6,
+                                     identity_atol=1e-8):
+    """Domain-mean Murphy decomposition of MSE into bias / spread / correlation.
+
+    Same identity and math as ``murphy_decomposition``::
+
+        bias   = (f̄ - ō)²
+        spread = (σ_f - σ_o)²
+        corr   = 2·(σ_f·σ_o - cov)
+        MSE    = bias + spread + corr        (exact identity)
+        ratio  = σ_f / σ_o                   <-- the smoothing diagnostic
+
+    but pooled into **one number per lead_time**: by default BOTH
+    ``reference_time`` AND the spatial dimension (``grid_index``) are pooled
+    into a single sample, instead of keeping a per-station/per-cell result.
+
+    Why pooling the spatial dimension here is safe, unlike ``murphy_decomposition``
+    ---------------------------------------------------------------------------
+    ``murphy_decomposition`` explicitly *refuses* to let ``dim`` include the
+    spatial dimension (``point_index``/``grid_index``) because pooling SYNOP
+    stations would bias the result: station density correlates with
+    terrain/country, so pooling pairs would let the aggregate be dominated by
+    wherever the observation network happens to be dense, silently turning a
+    model score into a partial measure of network geometry rather than model
+    skill (see that function's docstring, and design decision 5 in
+    ``murphy-decomposition.md``).
+
+    This function targets a structurally different reference: HA-AROME's own
+    analysis on **its own regular model grid** (3,071,581 cells). Every grid
+    cell there is an equally-weighted, regularly-gridded reference value by
+    construction — there is no equivalent of "station density" bias to guard
+    against. Pooling every cell (and every reference date) into one
+    domain-mean number per lead_time is therefore a legitimate, unbiased
+    spatial average for this reference type, not a shortcut around the same
+    problem ``murphy_decomposition`` exists to prevent. That is also why this
+    is a new, separate function rather than a flag on the existing one: the
+    two functions make *opposite* default assumptions about whether the
+    spatial dimension may appear in ``dim`` because the underlying safety
+    argument for each reference type is genuinely different, not a
+    superset/subset of the other. Naively pointing the per-station function
+    at the full 3.07M-cell grid instead would also produce a per-cell output
+    of roughly 12 stats × up to 25 leads × 3.07M cells × 5 vars — tens of GB
+    per run — which this domain-mean reduction avoids by design, not just by
+    convention.
+
+    Mirrors the ``reduce_dims: ["grid_index", "reference_time"]`` convention
+    already used by the ``scores.continuous.rmse``-based
+    ``*_RMSE_vs_ha_analysis.sh`` scripts, so results from this function are
+    directly comparable in shape (``stat`` x ``lead_time`` per variable) to
+    those RMSE outputs.
+
+    Parameters
+    ----------
+    observations : xr.Dataset
+        HA-AROME analysis (mbr000), dims (reference_time, lead_time, grid_index).
+    forecasts : xr.Dataset
+        Deterministic forecast, aligned onto the same grid_index (no
+        interpolation needed when both share the HA-AROME grid).
+    dim : str or list/tuple of str
+        Dimension(s) to pool over. Defaults to BOTH ``reference_time`` and
+        ``grid_index``, so the output keeps only ``lead_time`` (plus
+        ``stat``). Unlike ``murphy_decomposition``, including the spatial
+        dimension here is the intended default usage, not an error.
+    valid_range : dict, optional
+        Per-variable physical bounds, e.g. ``{"2t": [150, 360]}``. Same
+        convention as ``murphy_decomposition``.
+    member_dim : str
+        Ensemble dimension name whose presence is an error (default
+        "member") — same deterministic-only restriction as
+        ``murphy_decomposition``; ensemble-mean-vs-single-member is the
+        caller's decision, not the metric's.
+    check_identity : bool
+        Verify ``bias + spread + corr == MSE`` to floating-point tolerance
+        and raise if violated (default True).
+    identity_rtol, identity_atol : float
+        Tolerances for that check.
+
+    Returns
+    -------
+    xr.Dataset
+        One variable per input variable, each with a ``stat`` dimension
+        (same order/values as ``murphy_decomposition``: ``N, f_mean, o_mean,
+        sigma_f, sigma_o, r, bias, spread, corr, ratio, mse,
+        identity_residual``) and whatever dims survive pooling (typically
+        just ``lead_time``). No ``point_index``/``grid_index`` dimension
+        survives, so — unlike ``murphy_decomposition`` — there is no
+        per-cell/per-station coordinate to reattach afterwards.
+
+    Notes
+    -----
+    Same float64 promotion / ddof=0 population-moments / joint valid-pair
+    mask / ``corr = 2·(σ_f·σ_o - cov)`` design as ``murphy_decomposition`` —
+    see that function's docstring for the detailed rationale (identity
+    exactness, degenerate-cell safety), all of which applies unchanged here.
+    The math is identical between the two functions; only which dimensions
+    get pooled, and therefore what "one sample" means, differs.
+    """
+    dim_list = [dim] if isinstance(dim, str) else list(dim)
+
+    if member_dim in forecasts.dims:
+        raise ValueError(
+            f"murphy_decomposition_domain_mean is a deterministic metric but "
+            f"the forecast has an ensemble dimension '{member_dim}' of size "
+            f"{forecasts.sizes[member_dim]}. Reduce it explicitly first (e.g. "
+            f"ensemble mean, or select one member) rather than relying on "
+            f"this metric to choose for you."
+        )
+
+    per_var = {}
+    for var in list(observations.data_vars):
+        if var not in forecasts.data_vars:
+            print(f"  murphy_decomposition_domain_mean: '{var}' not in forecasts — skipping.", flush=True)
+            continue
+
+        obs_v = observations[var]
+        fct_v = forecasts[var]
+
+        # Mask unphysical fill values (e.g. 9.96921e+36 from zarr/netCDF)
+        obs_v = obs_v.where(np.abs(obs_v) < 1e10)
+        fct_v = fct_v.where(np.abs(fct_v) < 1e10)
+
+        if valid_range and var in valid_range:
+            vmin, vmax = valid_range[var]
+            obs_v = obs_v.where((obs_v >= vmin) & (obs_v <= vmax))
+            fct_v = fct_v.where((fct_v >= vmin) & (fct_v <= vmax))
+
+        # Joint mask: a pair counts only if BOTH sides are valid, so every
+        # moment below is computed over the identical (pooled) sample.
+        valid = obs_v.notnull() & fct_v.notnull()
+        obs_v = obs_v.where(valid)
+        fct_v = fct_v.where(valid)
+
+        # Promote to float64 before accumulating moments -- same rationale as
+        # murphy_decomposition (large, similar-magnitude numbers, e.g.
+        # f̄≈ō≈280K for 2t): in float32 the identity residual would land
+        # around 1e-5, larger than the check tolerance would allow.
+        obs_v = obs_v.astype("float64")
+        fct_v = fct_v.astype("float64")
+
+        n = valid.sum(dim=dim_list)
+
+        f_mean = fct_v.mean(dim=dim_list, skipna=True)
+        o_mean = obs_v.mean(dim=dim_list, skipna=True)
+
+        fa = fct_v - f_mean
+        oa = obs_v - o_mean
+
+        # skipna means each of these divides by the same count n -> ddof=0
+        var_f = (fa ** 2).mean(dim=dim_list, skipna=True)
+        var_o = (oa ** 2).mean(dim=dim_list, skipna=True)
+        cov   = (fa * oa).mean(dim=dim_list, skipna=True)
+
+        sigma_f = np.sqrt(var_f)
+        sigma_o = np.sqrt(var_o)
+
+        mse    = ((fct_v - obs_v) ** 2).mean(dim=dim_list, skipna=True)
+        bias   = (f_mean - o_mean) ** 2
+        spread = (sigma_f - sigma_o) ** 2
+        # == 2*sigma_f*sigma_o*(1-r), but finite when either sigma is 0
+        corr   = 2.0 * (sigma_f * sigma_o - cov)
+
+        denom = sigma_f * sigma_o
+        r     = cov / denom.where(denom > 0)
+        ratio = sigma_f / sigma_o.where(sigma_o > 0)
+
+        residual = bias + spread + corr - mse
+
+        stats = {
+            "N": n.astype("float64"), "f_mean": f_mean, "o_mean": o_mean,
+            "sigma_f": sigma_f, "sigma_o": sigma_o, "r": r,
+            "bias": bias, "spread": spread, "corr": corr,
+            "ratio": ratio, "mse": mse, "identity_residual": residual,
+        }
+        assert list(stats) == _MURPHY_STATS, "stat ordering drifted from _MURPHY_STATS"
+
+        per_var[var] = xr.concat(
+            [_drop_nondim_coords(stats[s]) for s in _MURPHY_STATS],
+            dim=xr.Variable("stat", _MURPHY_STATS),
+        ).compute()
+
+    result = xr.Dataset(per_var)
+
+    # No spatial dimension survives pooling, so unlike murphy_decomposition
+    # there is no per-cell/per-station coordinate to reattach here.
+
+    if check_identity:
+        _check_murphy_identity(result, rtol=identity_rtol, atol=identity_atol)
+
+    return result
+
+
 def taylor_diagram(observations, forecasts, dim, member_dim="member", skipna=True, valid_range=None):
     """Taylor diagram statistics per ensemble member and ensemble mean.
 
