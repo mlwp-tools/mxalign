@@ -56,7 +56,8 @@ class ObstableLoader(BaseLoader):
                 if end_date:
                     where_clauses.append(f"validdate < {int(pd.Timestamp(end_date).timestamp())}")
                 where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-                query = f"SELECT SID as code, validdate as valid_time, {', '.join(variables)} FROM SYNOP {where}"
+                quoted_variables = ", ".join(f'"{v}"' for v in variables)
+                query = f"SELECT SID as code, validdate as valid_time, {quoted_variables} FROM SYNOP {where}"
                 dfs.append(pd.read_sql(query, conn, index_col=["code", "valid_time"],
                                        parse_dates={"valid_time": {"unit": "s"}}))
                 conn.close()
@@ -110,8 +111,9 @@ class ObstableLoader(BaseLoader):
         where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
         # Read the data
+        quoted_variables = ", ".join(f'"{v}"' for v in variables)
         query = f"""
-                SELECT SID as code, validdate as valid_time, {", ".join(variables)}
+                SELECT SID as code, validdate as valid_time, {quoted_variables}
                 FROM SYNOP
                 {where}
             """
