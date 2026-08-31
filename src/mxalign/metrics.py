@@ -202,12 +202,42 @@ def qq_plot_data(observations, forecasts, quantiles_min, quantiles_max, quantile
     return xr.merge([obs_q, fct_q])
 
 
-def spread_skill(observations, forecasts, dim, member_dim="member", skipna=True, valid_range=None):
+def spread_skill(observations, forecasts, dim, member_dim="member", skipna=True,
+                 valid_range=None, ddof=1, spread_method="rms"):
     """Ensemble spread and RMSE of the ensemble mean vs observations.
 
-    Both curves are averaged over ``dim`` (typically ``reference_time`` and the
-    spatial dimension), leaving ``lead_time`` on the x-axis.  A well-calibrated
-    ensemble satisfies spread ≈ RMSE.
+    Both curves are reduced over ``dim`` (typically ``reference_time`` and the
+    spatial dimension), leaving ``lead_time`` on the x-axis.
+
+    ``rmse`` is ``sqrt(< (ens_mean - obs)^2 >)`` where ``< . >`` is the mean
+    over ``dim`` — i.e. the RMSE aggregates by pooling squared errors then
+    taking one square root (same convention as ``scores.continuous.rmse``).
+
+    ``spread`` is, by default (``spread_method="rms"``), the matching
+    root-**mean**-square quantity::
+
+        spread = sqrt( < ensemble variance > )
+
+    so spread and rmse are on the same footing: the mean of a squared
+    quantity, square-rooted once.
+
+    Interpreting spread vs rmse
+    ---------------------------
+    A reliable ensemble does NOT have ``spread == rmse`` at finite ensemble
+    size ``M``.  If truth and members are exchangeable draws from the same
+    distribution (variance ``sigma^2``)::
+
+        E[rmse^2]   = sigma^2 * (M + 1) / M      (sigma^2 / M sampling error
+                                                  of the ensemble mean, plus
+                                                  sigma^2 error of the truth)
+        E[spread^2] = sigma^2
+        =>  spread / rmse  ->  sqrt(M / (M + 1))     ( 0.91 at M=5,
+                                                       0.98 at M=31 )
+
+    This function returns the **raw** spread and rmse; it does not apply the
+    finite-``M`` inflation.  For a single "1.0 == calibrated" line that is
+    comparable across ensemble sizes, multiply spread by ``sqrt((M+1)/M)``
+    (or divide rmse by it) in the plotting/interpretation layer.
 
     Parameters
     ----------
@@ -216,13 +246,30 @@ def spread_skill(observations, forecasts, dim, member_dim="member", skipna=True,
     forecasts : xr.Dataset
         Ensemble forecast, dims (..., member, lead_time, point_index/grid_index).
     dim : str or list of str
-        Dimensions to average over (e.g. ["point_index", "reference_time"]).
+        Dimensions to reduce over (e.g. ["point_index", "reference_time"]).
     member_dim : str
         Name of the ensemble member dimension (default: "member").
     skipna : bool
         Whether to skip NaNs.
     valid_range : dict, optional
         Per-variable physical bounds, e.g. {"2t": [150, 360]}.
+    ddof : int
+        Delta-degrees-of-freedom for the ensemble variance (default: 1, the
+        unbiased estimator ``1/(M-1) * sum (x_i - xbar)^2``).  ``ddof=0``
+        under-estimates ``sigma`` by ``sqrt((M-1)/M)`` — 11.8 % at M=5 vs
+        1.7 % at M=31 — which biases cross-ensemble-size comparisons.
+    spread_method : {"rms", "mean_std"}
+        How the per-point spread is aggregated over ``dim``:
+
+        - ``"rms"`` (default): ``sqrt( mean( ensemble variance ) )`` — the
+          quantity that pairs with rmse (see above).
+        - ``"mean_std"``: ``mean( ensemble std )``.  Jensen's inequality
+          makes this <= the ``"rms"`` value, by a gap that grows with how
+          heterogeneous the spread is across ``dim`` (~20 % for 2t on a
+          regional domain) and that is itself mildly ensemble-size
+          dependent.  Kept only for reproducing results produced before
+          this parameter existed: ``spread_method="mean_std", ddof=0``
+          reproduces the historical output exactly.
 
     Returns
     -------
@@ -231,6 +278,11 @@ def spread_skill(observations, forecasts, dim, member_dim="member", skipna=True,
         (values: ``["spread", "rmse"]``) and remaining dims (typically
         ``lead_time``).
     """
+    if spread_method not in ("rms", "mean_std"):
+        raise ValueError(
+            f"spread_method must be 'rms' or 'mean_std', got {spread_method!r}"
+        )
+
     dim_list = [dim] if isinstance(dim, str) else list(dim)
 
     # Mirror the chunking strategy used by _rechunk() for xskillscore metrics:
@@ -264,7 +316,11 @@ def spread_skill(observations, forecasts, dim, member_dim="member", skipna=True,
             fct_v = fct_v.where((fct_v >= vmin) & (fct_v <= vmax))
 
         ens_mean = fct_v.mean(dim=member_dim, skipna=skipna)
-        spread = fct_v.std(dim=member_dim, skipna=skipna).mean(dim=dim_list, skipna=skipna)
+        ens_var = fct_v.var(dim=member_dim, ddof=ddof, skipna=skipna)
+        if spread_method == "rms":
+            spread = np.sqrt(ens_var.mean(dim=dim_list, skipna=skipna))
+        else:  # "mean_std"
+            spread = np.sqrt(ens_var).mean(dim=dim_list, skipna=skipna)
         rmse = np.sqrt(((ens_mean - obs_v) ** 2).mean(dim=dim_list, skipna=skipna))
 
         per_var[var] = xr.concat(
