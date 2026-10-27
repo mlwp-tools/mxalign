@@ -1,11 +1,11 @@
 import pytest
 import xarray as xr
 
-from mxalign.transformations.registry import (
+from mxalign.pipeline.transformations.registry import (
     available_transformations,
     register_transformation,
 )
-from mxalign.transformations.transform import transform
+from mxalign.pipeline.transformations.transform import transform
 
 
 @register_transformation("_test_double")

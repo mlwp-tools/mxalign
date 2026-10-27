@@ -93,7 +93,7 @@ mxalign slurm path/to/config.yaml --account your_account --queue your_queue --co
 You can also execute the entire configuration-driven pipeline directly from Python using the `Runner` class.
 
 ```python
-from mxalign.runner import Runner
+from mxalign.pipeline.runner import Runner
 
 # Initialize the runner with a YAML config file or a dictionary
 runner = Runner("path/to/config.yaml")

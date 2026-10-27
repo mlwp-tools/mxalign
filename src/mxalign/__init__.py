@@ -1,5 +1,8 @@
-from .transformations.transform import transform
-from .transformations.registry import available_transformations, register_transformation
+from .pipeline.transformations.transform import transform
+from .pipeline.transformations.registry import (
+    available_transformations,
+    register_transformation,
+)
 from .alignment.interpolations.interpolate import interpolate
 from .alignment.interpolations.registry import (
     available_interpolations,
@@ -10,7 +13,7 @@ from .alignment.space import align_space
 
 from . import accessor
 from . import alignment
-from . import transformations
+from . import pipeline
 
 __all__ = [
     "transform",
@@ -23,5 +26,5 @@ __all__ = [
     "align_space",
     "accessor",
     "alignment",
-    "transformations",
+    "pipeline",
 ]

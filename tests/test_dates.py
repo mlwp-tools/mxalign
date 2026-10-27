@@ -2,9 +2,9 @@ import datetime
 
 import pytest
 
-from mxalign.utils.config import Config
-from mxalign.utils.dates import Dates
-from mxalign.utils.save import DatasetPath
+from mxalign.pipeline.config import Config
+from mxalign.pipeline.dates import Dates
+from mxalign.pipeline.save import DatasetPath
 
 # 3 reference times (daily) × 3 lead times (0, 12, 24h)
 DATES = dict(start="2020-01-01", end="2020-01-03", period="1D", range="24h", step="12h")

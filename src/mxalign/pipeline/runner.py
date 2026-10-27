@@ -3,11 +3,11 @@ import xarray as xr
 
 from mlwp_data_loaders import load_and_validate_dataset
 
-from .utils.config import Config
+from .config import Config
 from .transformations.transform import transform
-from .alignment.time import align_time
-from .alignment.nans import broadcast_nans
-from .utils.save import save_dataset, save_metrics
+from ..alignment.time import align_time
+from ..alignment.nans import broadcast_nans
+from .save import save_dataset, save_metrics
 from .verification import Metric
 
 

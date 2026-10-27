@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [project.scripts]
-mxalign = "mxalign.cli:main"
+mxalign = "mxalign.pipeline.cli:main"
 
 [project.optional-dependencies]
 earthkit = [

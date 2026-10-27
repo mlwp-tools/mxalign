@@ -1,6 +1,6 @@
 import pytest
 
-from mxalign.runner import Runner
+from mxalign.pipeline.runner import Runner
 
 
 def _runner(datasets: dict, alignment: dict) -> Runner:
