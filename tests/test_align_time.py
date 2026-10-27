@@ -21,6 +21,10 @@ Valid-time coverage from ds_fcst:
 import numpy as np
 import pytest
 import xarray as xr
+from mlwp_data_specs.specs.traits.uncertainty import Uncertainty
+from mlwp_data_specs.specs.traits.uncertainty import (
+    validate_dataset as validate_uncertainty,
+)
 from numpy.typing import ArrayLike
 
 T0 = np.datetime64("2020-01-01T00:00", "ns")
@@ -696,3 +700,158 @@ class TestForecastToForecast:
         """
         result = ds_fcst.mx.align_time_with(ds_fcst2, lead_time="reference")
         assert result.mx.is_forecast()
+
+
+# ---------------------------------------------------------------------------
+# Ensembles: the member dimension rides along and is never matched
+# ---------------------------------------------------------------------------
+
+
+def _assert_ensemble(ds: xr.Dataset, members: ArrayLike) -> None:
+    """Assert that ``ds`` is still a valid ensemble with the given members.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Dataset to check.
+    members : ArrayLike
+        Expected values of the ``member`` coordinate.
+    """
+    assert ds.mx.is_ensemble()
+    np.testing.assert_array_equal(ds["member"].values, members)
+    assert ds["member"].attrs["standard_name"] == "realization"
+    report, _ = validate_uncertainty(ds, trait=Uncertainty.ENSEMBLE)
+    assert not report.has_fails()
+
+
+def _per_member(ds: xr.Dataset, member: int) -> xr.DataArray:
+    """Return ``temp`` of one member, minus the 100-per-member offset.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Ensemble built from the ``ds_fcst_ens`` fixture.
+    member : int
+        Member to select.
+
+    Returns
+    -------
+    xr.DataArray
+        The member's values, comparable to the deterministic ``ds_fcst``.
+    """
+    return ds["temp"].sel(member=member, drop=True) - 100.0 * member
+
+
+class TestEnsemble:
+    """Group tests of time alignment with a ``member`` dimension."""
+
+    @pytest.mark.parametrize("lead_time", ["shortest", "longest", "6h"])
+    def test_forecast_ensemble_to_observation(
+        self,
+        ds_fcst_ens: xr.Dataset,
+        ds_fcst: xr.Dataset,
+        ds_obs: xr.Dataset,
+        lead_time: str,
+    ) -> None:
+        """Check that each member is aligned like the deterministic forecast.
+
+        Parameters
+        ----------
+        ds_fcst_ens : xr.Dataset
+            Point forecast ensemble fixture.
+        ds_fcst : xr.Dataset
+            Point forecast fixture, equal to member 0.
+        ds_obs : xr.Dataset
+            Point observation fixture.
+        lead_time : str
+            Lead time strategy for forecast-to-observation alignment.
+        """
+        result = ds_fcst_ens.mx.align_time_with(ds_obs, lead_time=lead_time)
+        expected = ds_fcst.mx.align_time_with(ds_obs, lead_time=lead_time)
+
+        assert result.mx.is_observation()
+        _assert_ensemble(result, ds_fcst_ens["member"])
+        for member in result["member"].values:
+            xr.testing.assert_equal(_per_member(result, member), expected["temp"])
+
+    def test_observation_to_forecast_ensemble_adds_no_member(
+        self, ds_obs: xr.Dataset, ds_fcst_ens: xr.Dataset, ds_fcst: xr.Dataset
+    ) -> None:
+        """Check that observations reshape onto an ensemble's times only.
+
+        Parameters
+        ----------
+        ds_obs : xr.Dataset
+            Point observation fixture.
+        ds_fcst_ens : xr.Dataset
+            Point forecast ensemble fixture.
+        ds_fcst : xr.Dataset
+            Point forecast fixture with the same times as the ensemble.
+        """
+        result = ds_obs.mx.align_time_with(ds_fcst_ens)
+
+        xr.testing.assert_identical(result, ds_obs.mx.align_time_with(ds_fcst))
+        assert result.mx.is_deterministic()
+
+    def test_forecast_ensemble_to_forecast(
+        self, ds_fcst_ens: xr.Dataset, ds_fcst: xr.Dataset
+    ) -> None:
+        """Check that each member is aligned like the deterministic forecast.
+
+        Parameters
+        ----------
+        ds_fcst_ens : xr.Dataset
+            Point forecast ensemble fixture.
+        ds_fcst : xr.Dataset
+            Point forecast fixture, equal to member 0.
+        """
+        target = ds_fcst.isel(reference_time=[1, 2], lead_time=[0, 1])
+
+        result = ds_fcst_ens.mx.align_time_with(target)
+        expected = ds_fcst.mx.align_time_with(target)
+
+        _assert_ensemble(result, ds_fcst_ens["member"])
+        for member in result["member"].values:
+            xr.testing.assert_equal(_per_member(result, member), expected["temp"])
+
+    def test_forecast_to_forecast_ensemble_adds_no_member(
+        self, ds_fcst: xr.Dataset, ds_fcst_ens: xr.Dataset
+    ) -> None:
+        """Check that a deterministic forecast aligns to an ensemble's times only.
+
+        Parameters
+        ----------
+        ds_fcst : xr.Dataset
+            Point forecast fixture.
+        ds_fcst_ens : xr.Dataset
+            Point forecast ensemble fixture.
+        """
+        target = ds_fcst_ens.isel(reference_time=[1, 2], lead_time=[0, 1])
+
+        result = ds_fcst.mx.align_time_with(target)
+
+        xr.testing.assert_identical(
+            result, ds_fcst.mx.align_time_with(target.isel(member=0, drop=True))
+        )
+
+    def test_members_are_not_matched_between_ensembles(
+        self, ds_fcst_ens: xr.Dataset
+    ) -> None:
+        """Check that aligning to an ensemble with other members keeps all members.
+
+        Member 1 of one ensemble has nothing to do with member 1 of another, so
+        the ``member`` dimension must not be reindexed.
+
+        Parameters
+        ----------
+        ds_fcst_ens : xr.Dataset
+            Point forecast ensemble fixture with members 0, 1, 2.
+        """
+        target = ds_fcst_ens.isel(member=[1, 2]).assign_coords(member=[10, 11])
+
+        result = ds_fcst_ens.mx.align_time_with(target)
+
+        _assert_ensemble(result, ds_fcst_ens["member"])
+        xr.testing.assert_equal(
+            result["temp"].drop_vars("valid_time"), ds_fcst_ens["temp"]
+        )

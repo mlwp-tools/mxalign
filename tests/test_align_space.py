@@ -252,6 +252,31 @@ class TestGridToPoint:
         assert result["temp"].isel(point_index=1).item() == pytest.approx(1.0)
         assert result["temp"].isel(point_index=2).item() == pytest.approx(2.0)
 
+    @pytest.mark.parametrize("method", ["xarray", "delaunay"])
+    def test_ensemble_keeps_members_and_trait(
+        self, ds_grid_ens: xr.Dataset, ds_point: xr.Dataset, method: str
+    ) -> None:
+        """Check that an ensemble stays an ensemble with the same members.
+
+        Parameters
+        ----------
+        ds_grid_ens : xr.Dataset
+            Stacked grid ensemble fixture.
+        ds_point : xr.Dataset
+            Point observation fixture.
+        method : str
+            Interpolator to use; the xarray one needs a lat/lon-dim source.
+        """
+        source = ds_grid_ens
+        if method == "xarray":
+            source = source.set_index(grid_index=["latitude", "longitude"]).unstack()
+
+        result = source.mx.align_space_with(ds_point, method=method)
+
+        assert result.mx.is_point()
+        assert result.mx.is_ensemble()
+        xr.testing.assert_identical(result["member"], ds_grid_ens["member"])
+
 
 # ---------------------------------------------------------------------------
 # Case 3: Point → * (not implemented)

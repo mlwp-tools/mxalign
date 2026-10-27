@@ -401,3 +401,41 @@ class TestLeadTimeOption:
 
         with pytest.raises(ValueError, match="only supported when the reference"):
             align_time(datasets, reference="ref", lead_time="union")
+
+
+# ---------------------------------------------------------------------------
+# Ensembles in the global regime
+# ---------------------------------------------------------------------------
+
+
+class TestEnsemble:
+    """Group tests of global alignment with an ensemble among the forecasts."""
+
+    def test_ensemble_keeps_members_on_common_grid(
+        self, ds_fcst: xr.Dataset, ds_fcst_ens: xr.Dataset, ds_obs: xr.Dataset
+    ) -> None:
+        """Check that an ensemble is put on the common grid member by member.
+
+        Parameters
+        ----------
+        ds_fcst : xr.Dataset
+            Point forecast fixture, equal to member 0 of the ensemble.
+        ds_fcst_ens : xr.Dataset
+            Point forecast ensemble fixture.
+        ds_obs : xr.Dataset
+            Point observation fixture, used as the reference.
+        """
+        out = align_time(
+            {"det": ds_fcst, "ens": ds_fcst_ens, "obs": ds_obs}, reference="obs"
+        )
+
+        ens = out["ens"]
+        assert ens.mx.is_ensemble()
+        assert ens["member"].attrs["standard_name"] == "realization"
+        for member in ens["member"].values:
+            xr.testing.assert_identical(
+                ens["temp"].sel(member=member, drop=True) - 100.0 * member,
+                out["det"]["temp"],
+            )
+        # The observation is reshaped onto the time grid only
+        assert set(out["obs"]["temp"].dims) == {"reference_time", "lead_time"}
