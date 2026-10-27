@@ -50,6 +50,36 @@ class TestTraits:
         with pytest.raises(KeyError, match="mlwp_space_trait"):
             ds.mx.is_grid()
 
+    @pytest.mark.parametrize("trait", ["deterministic", "ensemble", "quantile"])
+    def test_uncertainty_predicates(self, ds_grid: xr.Dataset, trait: str) -> None:
+        """Check that exactly the predicate matching the uncertainty trait holds.
+
+        Parameters
+        ----------
+        ds_grid : xr.Dataset
+            Stacked grid forecast fixture.
+        trait : str
+            Value of the ``mlwp_uncertainty_trait`` attribute.
+        """
+        ds_grid.attrs["mlwp_uncertainty_trait"] = trait
+        predicates = {
+            "deterministic": ds_grid.mx.is_deterministic(),
+            "ensemble": ds_grid.mx.is_ensemble(),
+            "quantile": ds_grid.mx.is_quantile(),
+        }
+        assert predicates == {name: name == trait for name in predicates}
+
+    def test_missing_uncertainty_trait_raises(self, ds_grid: xr.Dataset) -> None:
+        """Check that uncertainty predicates raise when the trait is missing.
+
+        Parameters
+        ----------
+        ds_grid : xr.Dataset
+            Stacked grid forecast fixture, which has no uncertainty trait.
+        """
+        with pytest.raises(KeyError, match="mlwp_uncertainty_trait"):
+            ds_grid.mx.is_ensemble()
+
 
 class TestNoMutation:
     """Group tests that accessor methods do not mutate the source dataset."""

@@ -1,13 +1,18 @@
-"""The ``ds.mx`` xarray Dataset accessor for space/time predicates and alignment."""
+"""The ``ds.mx`` xarray Dataset accessor for trait predicates and alignment."""
 
 import numpy as np
 import pandas as pd
 import xarray as xr
 import cartopy.crs as ccrs
 
-from mlwp_data_specs.api import SPACE_TRAIT_ATTR, TIME_TRAIT_ATTR
+from mlwp_data_specs.api import (
+    SPACE_TRAIT_ATTR,
+    TIME_TRAIT_ATTR,
+    UNCERTAINTY_TRAIT_ATTR,
+)
 from mlwp_data_specs.specs.traits.spatial_coordinate import Space
 from mlwp_data_specs.specs.traits.time_coordinate import Time
+from mlwp_data_specs.specs.traits.uncertainty import Uncertainty
 
 from ..utils.projections import create_cartopy_crs, BUILTIN
 from ..alignment import time as _time
@@ -16,10 +21,10 @@ from ..alignment import space as _space
 
 @xr.register_dataset_accessor("mx")
 class MxAccessor:
-    """``ds.mx`` accessor — space/time predicates and alignment operations.
+    """``ds.mx`` accessor — trait predicates and alignment operations.
 
-    Reads ``mlwp_space_trait`` and ``mlwp_time_trait`` from ``ds.attrs`` on
-    every use (xarray caches the accessor per object, so reading them once
+    Reads ``mlwp_space_trait``, ``mlwp_time_trait`` and
+    ``mlwp_uncertainty_trait`` from ``ds.attrs`` on every use (xarray caches the accessor per object, so reading them once
     would go stale when attrs change). Raises ``KeyError`` when a trait is
     needed but missing. Never modifies ``ds``; operations return new datasets.
 
@@ -90,6 +95,22 @@ class MxAccessor:
         """
         return Time(self._trait(TIME_TRAIT_ATTR))
 
+    @property
+    def _uncertainty(self) -> Uncertainty:
+        """The uncertainty trait of the dataset.
+
+        Returns
+        -------
+        Uncertainty
+            The uncertainty trait read from ``ds.attrs``.
+
+        Raises
+        ------
+        KeyError
+            If the dataset has no uncertainty trait attribute.
+        """
+        return Uncertainty(self._trait(UNCERTAINTY_TRAIT_ATTR))
+
     # --- Space predicates ---
 
     def is_grid(self) -> bool:
@@ -153,6 +174,53 @@ class MxAccessor:
             If the dataset has no time trait attribute.
         """
         return self._time == Time.OBSERVATION
+
+    # --- Uncertainty predicates ---
+
+    def is_deterministic(self) -> bool:
+        """Return whether the dataset has the DETERMINISTIC uncertainty trait.
+
+        Returns
+        -------
+        bool
+            ``True`` if the uncertainty trait is ``Uncertainty.DETERMINISTIC``.
+
+        Raises
+        ------
+        KeyError
+            If the dataset has no uncertainty trait attribute.
+        """
+        return self._uncertainty == Uncertainty.DETERMINISTIC
+
+    def is_ensemble(self) -> bool:
+        """Return whether the dataset has the ENSEMBLE uncertainty trait.
+
+        Returns
+        -------
+        bool
+            ``True`` if the uncertainty trait is ``Uncertainty.ENSEMBLE``.
+
+        Raises
+        ------
+        KeyError
+            If the dataset has no uncertainty trait attribute.
+        """
+        return self._uncertainty == Uncertainty.ENSEMBLE
+
+    def is_quantile(self) -> bool:
+        """Return whether the dataset has the QUANTILE uncertainty trait.
+
+        Returns
+        -------
+        bool
+            ``True`` if the uncertainty trait is ``Uncertainty.QUANTILE``.
+
+        Raises
+        ------
+        KeyError
+            If the dataset has no uncertainty trait attribute.
+        """
+        return self._uncertainty == Uncertainty.QUANTILE
 
     # --- Space operations ---
 
