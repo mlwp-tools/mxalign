@@ -1,3 +1,5 @@
+"""Shared fixtures and time coordinates for the ``mxalign`` test suite."""
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -26,6 +28,18 @@ OBS_VALUES = np.arange(len(OBS_TIMES), dtype=float) * 10.0  # 0, 10, 20, 30, 40,
 
 
 def _props(time: str) -> dict:
+    """Build the ``mlwp_*`` trait attributes for a deterministic point dataset.
+
+    Parameters
+    ----------
+    time : str
+        Value of the ``mlwp_time_trait`` attribute, e.g. ``"forecast"``.
+
+    Returns
+    -------
+    dict
+        Trait attributes to attach to a dataset's ``attrs``.
+    """
     return {
         "mlwp_time_trait": time,
         "mlwp_space_trait": "point",
@@ -35,6 +49,14 @@ def _props(time: str) -> dict:
 
 @pytest.fixture
 def ds_fcst() -> xr.Dataset:
+    """Provide a point forecast with 3 reference times and 4 lead times.
+
+    Returns
+    -------
+    xr.Dataset
+        Forecast with ``temp[i, j] = i * 10 + j`` over ``reference_time`` and
+        ``lead_time``.
+    """
     return xr.Dataset(
         {"temp": (["reference_time", "lead_time"], FORECAST_VALUES)},
         coords={"reference_time": REFERENCE_TIMES, "lead_time": LEAD_TIMES},
@@ -44,6 +66,13 @@ def ds_fcst() -> xr.Dataset:
 
 @pytest.fixture
 def ds_obs() -> xr.Dataset:
+    """Provide a point observation with 6 valid times from T0-6h to T0+24h.
+
+    Returns
+    -------
+    xr.Dataset
+        Observation with ``temp`` values 0, 10, ..., 50 along ``valid_time``.
+    """
     return xr.Dataset(
         {"temp": ("valid_time", OBS_VALUES)},
         coords={"valid_time": OBS_TIMES},

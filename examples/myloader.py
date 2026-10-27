@@ -1,7 +1,22 @@
+"""Example custom loader for SYNOP observations, used by the example pipeline config."""
+
 import xarray as xr
 
 
-def load_dataset(file):
+def load_dataset(file: str) -> xr.Dataset:
+    """Load a SYNOP observation netCDF file and attach the mlwp traits.
+
+    Parameters
+    ----------
+    file : str
+        Path to the netCDF file with a ``code`` station dimension.
+
+    Returns
+    -------
+    xr.Dataset
+        Observation point dataset with a ``point_index`` dimension, mlwp
+        traits in its attributes, and CF attributes on its coordinates.
+    """
     ds = xr.open_mfdataset([file], engine="h5netcdf")
 
     ds = ds.rename_dims(code="point_index")

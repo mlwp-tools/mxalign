@@ -1,3 +1,5 @@
+"""Tests for loading and validating pipeline configuration."""
+
 from pathlib import Path
 
 import pytest
@@ -7,10 +9,28 @@ from mxalign.pipeline.config import load_config
 
 EXAMPLE_CONFIG = Path(__file__).parent.parent / "examples" / "config.yaml"
 
-DATES = dict(start="2020-01-01", end="2020-01-02", period="1D", range="12h", step="12h")
+DATES = {
+    "start": "2020-01-01",
+    "end": "2020-01-02",
+    "period": "1D",
+    "range": "12h",
+    "step": "12h",
+}
 
 
-def _config(**sections) -> dict:
+def _config(**sections: dict) -> dict:
+    """Build a minimal valid config dict, extended with extra sections.
+
+    Parameters
+    ----------
+    **sections : dict
+        Extra top-level sections to add to (or override in) the config.
+
+    Returns
+    -------
+    dict
+        Config dict with a single ``fc`` dataset used as alignment reference.
+    """
     return {
         "datasets": {"fc": {"loader": "x", "files": "/d/fc.nc"}},
         "alignment": {"reference": "fc"},
@@ -18,7 +38,8 @@ def _config(**sections) -> dict:
     }
 
 
-def test_example_config_validates():
+def test_example_config_validates() -> None:
+    """Check that the example config in ``examples/`` loads and validates."""
     config = load_config(str(EXAMPLE_CONFIG))
     assert config.alignment.reference == "cerra"
     assert config.alignment.space.interpolation == {"method": "delaunay"}
@@ -30,31 +51,36 @@ def test_example_config_validates():
     assert len(config.datasets["la-1024-ea-00"].files) > 1
 
 
-def test_unknown_top_level_key_is_rejected():
+def test_unknown_top_level_key_is_rejected() -> None:
+    """Check that an unknown top-level config key raises a validation error."""
     with pytest.raises(ValidationError, match="not_a_section"):
         load_config(_config(not_a_section={"reference": "fc"}))
 
 
-def test_missing_alignment_reference_is_rejected():
+def test_missing_alignment_reference_is_rejected() -> None:
+    """Check that a config without ``alignment.reference`` is rejected."""
     config = _config()
     config["alignment"] = {"broadcast_nans": False}
     with pytest.raises(ValidationError, match="alignment.reference"):
         load_config(config)
 
 
-def test_unknown_save_datasets_option_is_rejected():
+def test_unknown_save_datasets_option_is_rejected() -> None:
+    """Check that an unknown ``alignment.save.datasets`` option is rejected."""
     save = {"method": "to_netcdf", "path": "out.nc", "datasets": "some"}
     with pytest.raises(ValidationError, match="alignment.save.datasets"):
         load_config(_config(alignment={"reference": "fc", "save": save}))
 
 
-def test_extra_dataset_keys_are_passed_to_loader():
+def test_extra_dataset_keys_are_passed_to_loader() -> None:
+    """Check that unknown dataset keys are collected as loader kwargs."""
     config = _config()
     config["datasets"]["fc"]["chunks"] = {"time": 1}
     assert load_config(config).datasets["fc"].kwargs == {"chunks": {"time": 1}}
 
 
-def test_dataset_dates_override_top_level_dates():
+def test_dataset_dates_override_top_level_dates() -> None:
+    """Check that per-dataset dates override the top-level dates section."""
     config = _config(dates=DATES)
     config["datasets"]["fc"] = {
         "loader": "x",
@@ -68,7 +94,8 @@ def test_dataset_dates_override_top_level_dates():
     ]
 
 
-def test_incomplete_dates_are_rejected():
+def test_incomplete_dates_are_rejected() -> None:
+    """Check that a dates section missing required fields is rejected."""
     config = _config()
     config["datasets"]["fc"]["dates"] = {"start": "2020-01-01"}
     with pytest.raises(ValidationError, match="dates is missing end, period"):
