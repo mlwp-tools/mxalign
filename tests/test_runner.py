@@ -50,6 +50,38 @@ def test_align_runs_time_alignment_without_time_section(
     assert runner.datasets["obs"].mx.is_forecast()
 
 
+def test_align_mixes_deterministic_and_ensemble(
+    ds_fcst: xr.Dataset, ds_fcst_ens: xr.Dataset, ds_obs: xr.Dataset
+) -> None:
+    """Check that ``align`` with NaN broadcasting handles an ensemble.
+
+    The deterministic forecast and the observation must end up missing where
+    the ensemble is, and the ensemble must be missing all or none of its
+    members.
+
+    Parameters
+    ----------
+    ds_fcst : xr.Dataset
+        Point forecast fixture.
+    ds_fcst_ens : xr.Dataset
+        Point forecast ensemble fixture.
+    ds_obs : xr.Dataset
+        Point observation fixture, used as the reference.
+    """
+    ens = ds_fcst_ens.copy(deep=True)
+    ens["temp"][{"member": 1, "lead_time": 1}] = float("nan")
+    runner = _runner({"obs": ds_obs, "det": ds_fcst, "ens": ens}, {"reference": "obs"})
+
+    runner.align()
+
+    out = runner.datasets
+    missing = out["ens"]["temp"].isnull()
+    xr.testing.assert_equal(missing.any("member"), missing.all("member"))
+    for name in ("obs", "det"):
+        xr.testing.assert_equal(out[name]["temp"].isnull(), missing.any("member"))
+    assert missing.sel(lead_time="6h").all()
+
+
 def test_align_time_rejects_unknown_options() -> None:
     """Check that unknown ``alignment.time`` options are rejected."""
     with pytest.raises(ValidationError, match="alignment.time.return_as"):
