@@ -1,3 +1,5 @@
+"""Grid-to-point linear interpolator based on a Delaunay triangulation."""
+
 import hashlib
 import logging
 from functools import partial
@@ -25,11 +27,32 @@ _WEIGHTS_CACHE_SIZE = 8
 
 @register_interpolator
 class DelaunayInterpolator(BaseInterpolator):
+    """Linear grid-to-point interpolation via Delaunay triangulation.
+
+    The source grid points are triangulated in (latitude, longitude) and each
+    target point gets barycentric weights from its enclosing triangle. The
+    sparse weight matrix is cached per source/target coordinate pair. Target
+    points outside the convex hull of the source grid get NaN.
+
+    Parameters
+    ----------
+    target_dataset : xr.Dataset
+        Point dataset with ``longitude`` and ``latitude`` coordinates.
+    **options : object
+        Interpolator options; only ``method="linear"`` (the default) is
+        supported.
+
+    Raises
+    ------
+    ValueError
+        If ``method`` is anything other than ``"linear"``.
+    """
+
     name = "delaunay"
     source_space = Space.GRID
     target_space = Space.POINT
 
-    def __init__(self, target_dataset: xr.Dataset, **options) -> None:
+    def __init__(self, target_dataset: xr.Dataset, **options: object) -> None:
         super().__init__(target_dataset, **options)
         method = self.options.get("method", "linear")
         if method != "linear":
@@ -38,6 +61,29 @@ class DelaunayInterpolator(BaseInterpolator):
             )
 
     def _interpolate(self, source_dataset: xr.Dataset) -> xr.Dataset:
+        """Interpolate a stacked grid dataset to the target points.
+
+        Variables without a ``grid_index`` dimension are skipped. In the
+        output, ``point_index`` takes the place of ``grid_index`` and the other
+        dimensions keep their order.
+
+        Parameters
+        ----------
+        source_dataset : xr.Dataset
+            Grid dataset with a ``grid_index`` dimension and ``latitude``/
+            ``longitude`` coordinates.
+
+        Returns
+        -------
+        xr.Dataset
+            The interpolated variables along ``point_index``, with the target
+            ``latitude``/``longitude`` coordinates and the source attributes.
+
+        Raises
+        ------
+        NotImplementedError
+            If the source dataset has no ``grid_index`` dimension.
+        """
         if "grid_index" not in source_dataset.dims:
             raise NotImplementedError(
                 "Delaunay interpolation currently only supports stacked grids"
@@ -66,13 +112,18 @@ class DelaunayInterpolator(BaseInterpolator):
         arrays_out = {}
         for var in source_dataset.data_vars:
             da = source_dataset[var]
-            if da.dims[-1] != "grid_index":
-                print(
-                    f"Skipping variable '{var}' - doesn't end with spatial dimension grid_index"
+            if "grid_index" not in da.dims:
+                logger.warning(
+                    "Delaunay interpolation: skipping variable '%s' without a "
+                    "grid_index dimension.",
+                    var,
                 )
                 continue
-            else:
-                arrays_out[var] = interpolate_da(da, W, target_points)
+            # The weight matmul needs grid_index last; put point_index back in
+            # its place afterwards so e.g. a trailing member dim stays trailing
+            out_dims = [("point_index" if d == "grid_index" else d) for d in da.dims]
+            da = da.transpose(..., "grid_index")
+            arrays_out[var] = interpolate_da(da, W, target_points).transpose(*out_dims)
 
         ds_out = xr.Dataset(arrays_out).assign_coords(
             latitude=self.target_dataset["latitude"],
@@ -83,12 +134,36 @@ class DelaunayInterpolator(BaseInterpolator):
 
 
 def _fingerprint(points: np.ndarray) -> str:
-    """Hash of a full coordinate array (~20 ms for a 1M-point grid)."""
+    """Hash a full coordinate array (~20 ms for a 1M-point grid).
+
+    Parameters
+    ----------
+    points : np.ndarray
+        Coordinate array to hash.
+
+    Returns
+    -------
+    str
+        Hex digest of the array contents.
+    """
     return hashlib.blake2b(np.ascontiguousarray(points), digest_size=16).hexdigest()
 
 
 def _get_weights(source_points: np.ndarray, target_points: np.ndarray) -> csr_matrix:
-    """Return the weight matrix for these source/target points, building it on a cache miss."""
+    """Return the cached weight matrix for these points, building it on a miss.
+
+    Parameters
+    ----------
+    source_points : np.ndarray
+        Source coordinates, shape ``(n_source, 2)`` as (latitude, longitude).
+    target_points : np.ndarray
+        Target coordinates, shape ``(n_target, 2)`` as (latitude, longitude).
+
+    Returns
+    -------
+    csr_matrix
+        Sparse ``(n_target, n_source)`` barycentric weight matrix.
+    """
     key = (_fingerprint(source_points), _fingerprint(target_points))
     if key not in _WEIGHTS_CACHE:
         if len(_WEIGHTS_CACHE) >= _WEIGHTS_CACHE_SIZE:
@@ -104,8 +179,25 @@ def _build_weight_matrix(
     source_points: np.ndarray,
     target_points: np.ndarray,
 ) -> csr_matrix:
-    """Build a sparse ``(n_target, n_source)`` barycentric weight matrix; points outside the convex hull get NaN weights."""
+    """Build a sparse ``(n_target, n_source)`` barycentric weight matrix.
 
+    Target points outside the convex hull of the source points get NaN
+    weights.
+
+    Parameters
+    ----------
+    triangulation : Delaunay
+        Delaunay triangulation of ``source_points``.
+    source_points : np.ndarray
+        Source coordinates, shape ``(n_source, ndim)``.
+    target_points : np.ndarray
+        Target coordinates, shape ``(n_target, ndim)``.
+
+    Returns
+    -------
+    csr_matrix
+        Sparse ``(n_target, n_source)`` weight matrix.
+    """
     print("Calculating interpolation-weight matrix")
 
     n_target = len(target_points)
@@ -153,7 +245,25 @@ def _build_weight_matrix(
 def interpolate_da(
     da: xr.DataArray, W: csr_matrix, target_points: np.ndarray
 ) -> xr.DataArray:
-    """Apply weight matrix ``W`` to ``da`` over its ``grid_index`` dim, returning a ``point_index`` DataArray."""
+    """Apply weight matrix ``W`` to ``da`` over its ``grid_index`` dimension.
+
+    The computation is lazy (``map_blocks``); dask-backed inputs whose
+    ``grid_index`` is split over several chunks are rechunked to one chunk.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Source data whose last dimension is ``grid_index``.
+    W : csr_matrix
+        Sparse ``(n_target, n_source)`` weight matrix.
+    target_points : np.ndarray
+        Target coordinates, shape ``(n_target, 2)``.
+
+    Returns
+    -------
+    xr.DataArray
+        Interpolated data with ``grid_index`` replaced by ``point_index``.
+    """
     n_target = len(target_points)
     leading_dims = da.dims[:-1]
 
@@ -214,7 +324,25 @@ def interpolate_block(
     W: csr_matrix,
     target_points: np.ndarray,
 ) -> xr.DataArray:
-    """Single-block sparse matmul used by ``map_blocks`` inside ``interpolate_da``."""
+    """Apply the sparse weight matrix to a single block.
+
+    Used by ``map_blocks`` inside ``interpolate_da``.
+
+    Parameters
+    ----------
+    block : xr.DataArray
+        Block of source data whose last dimension is ``grid_index``.
+    W : csr_matrix
+        Sparse ``(n_target, n_source)`` weight matrix.
+    target_points : np.ndarray
+        Target coordinates, shape ``(n_target, 2)``.
+
+    Returns
+    -------
+    xr.DataArray
+        Interpolated block with the last dimension replaced by
+        ``point_index``.
+    """
     data = block.values  # shape = (.., npoints)
     original_shape = data.shape[:-1]
     data_flat = data.reshape(

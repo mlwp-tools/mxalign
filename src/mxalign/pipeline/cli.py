@@ -1,6 +1,8 @@
+"""Command-line interface for running the pipeline on a local or SLURM dask cluster."""
+
 import argparse
-import sys
 import logging
+import sys
 
 # Define log format
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
@@ -8,10 +10,24 @@ DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 LOG = logging.getLogger(__name__)
 
 
-def run_local(args):
+def run_local(args: argparse.Namespace) -> None:
+    """Run the pipeline on a local dask cluster.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed arguments with ``CONFIG``, ``n_workers`` and
+        ``threads_per_worker``.
+
+    Raises
+    ------
+    SystemExit
+        With exit code 1 if the pipeline fails; the cluster is closed first.
+    """
     # Only import the necessary modules if function is called
     # to avoid unnecessary slow imports at the top level
     from dask.distributed import Client, LocalCluster
+
     from .runner import Runner
 
     cluster = LocalCluster(
@@ -31,11 +47,25 @@ def run_local(args):
         sys.exit(1)
 
 
-def run_slurm(args):
+def run_slurm(args: argparse.Namespace) -> None:
+    """Run the pipeline on a dask cluster of SLURM jobs.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed arguments with ``CONFIG``, ``queue``, ``account``, ``cores``,
+        ``memory`` and ``interface``.
+
+    Raises
+    ------
+    SystemExit
+        With exit code 1 if the pipeline fails; the cluster is closed first.
+    """
     # Only import the necessary modules if function is called
     # to avoid unnecessary slow imports at the top level
     from dask.distributed import Client
     from dask_jobqueue import SLURMCluster
+
     from .runner import Runner
 
     cluster = SLURMCluster(
@@ -69,8 +99,15 @@ def run_slurm(args):
         sys.exit(1)
 
 
-def main():
+def main() -> None:
+    """Parse the command line and run the selected subcommand.
 
+    Raises
+    ------
+    SystemExit
+        If the arguments are invalid, the command is unknown, or the
+        pipeline fails.
+    """
     parser = argparse.ArgumentParser(description="mxalign CLI")
     subparsers = parser.add_subparsers(
         dest="command", required=True, help="Available commands"

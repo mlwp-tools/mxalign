@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- All functions, methods and classes (package and tests) have type annotations and numpy-style docstrings, enforced in pre-commit/CI by ruff `ANN`/`D` rules and `numpydoc-validation`. `AGENTS.md` documents the coding conventions and development tools. @leifdenby
+- **Breaking:** the pipeline config is validated against an explicit pydantic schema (`mxalign.pipeline.config.PipelineConfig`, loaded with `load_config`) instead of being read as a free-form dict. Unknown sections or keys, and missing required keys, raise a `ValidationError` when the `Runner` is created; `Runner.config` is now the validated model. Per-dataset `dates` entries override individual fields of the top-level `dates`. @leifdenby
 - **Breaking:** file path patterns (`datasets.<name>.files` with a `dates:` section, and `alignment.save.path`) now use Python `str.format` syntax instead of earthkit-data patterns: `{reference_time:%Y%m%d%H}` instead of `{reference_time:strftime(%Y%m%d%H)}`, `{year:02d}` instead of `{year:int(%02d)}`. `{lead_time}` (integer hours) and `{valid_time}` are now supported in `files` patterns. `earthkit-data` is no longer a dependency. @michielv
 - **Breaking:** temporal alignment always runs in the pipeline; `alignment.time` is optional and only accepts `lead_time` (`reference` | `intersection` | `union`, forecast reference only). Unknown keys such as `return_as` or `method` now raise an error. `align_time` takes `reference` and an explicit `lead_time` instead of `**kwargs`. @michielv
 - Remove dataset loading and dataset validation and outsource it to [mlwp-data-loaders](https://github.com/mlwp-tools/mlwp-data-loaders) and [mlwp-data-specs](https://github.com/mlwp-tools/mlwp-data-specs) @michielv
@@ -17,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added CI action for package build and upload to pypi.org on releases. [\#28](https://github.com/mlwp-tools/mxalign/pull/28) @leifdenby
 - `transform()` and `interpolate()` return the same container type they are given: a one-item list now stays a list instead of being unwrapped to a bare dataset, and a dict with a single dataset no longer raises `KeyError`. @michielv
 - Delaunay interpolation weights are shared across datasets on the same grid, so aligning several models to the same points triangulates the grid once. When a multi-chunk `grid_index` is merged into a single chunk, the leading dimensions are re-chunked automatically so blocks stay near dask's `array.chunk-size`. @michielv
+- `ds.mx` has uncertainty predicates `is_deterministic()`, `is_ensemble()` and `is_quantile()`, which read `mlwp_uncertainty_trait` on every call like the space and time predicates. @michielv
+- **Breaking:** `broadcast_nans` needs the uncertainty trait on every dataset, and never matches the `member` (or `quantile`) dimension between datasets: an ensemble value counts as missing when any of its members is, and is then masked in all members, so the ensemble size stays constant over the verification sample ([ADR-003](doc/adr/ADR-003_ensemble-nan-masking.md)). A shared variable whose other dimensions differ between two datasets raises a `ValueError` that says so. @michielv
 
 ### Fixed
 - `ds.mx.add_xy(crs=...)` and `ds.mx.unstack(crs=...)` no longer replace the dataset held by the cached `ds.mx` accessor, so later `ds.mx` calls work on `ds` itself instead of a copy with the CRS attached. @michielv
@@ -25,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A pipeline config without a `transformations:` section no longer crashes. @michielv
 - `ds.mx.stack()` now stacks regular grids with `latitude`/`longitude` dimensions (it looked for `lat`/`lon`). @michielv
 - Delaunay interpolation could silently reuse the weights of a different grid with the same shape and corner coordinates, giving wrong values; weights are now cached by a hash of the full source and target coordinates. @michielv
+- NaN broadcasting (on by default in the pipeline) no longer crashes when an ensemble is aligned together with an observation or a deterministic forecast. @michielv
+- Delaunay interpolation no longer drops variables whose last dimension is not `grid_index`, such as an ensemble with `member` after `grid_index`. In the output, `point_index` takes the place of `grid_index` and the other dimensions keep their order. Variables without `grid_index` are still skipped, now with a logged warning instead of a `print`. @michielv
 
 ## [0.1.0](https://github.com/mlwp-tools/mxalign/releases/tag/v0.1.0)
 

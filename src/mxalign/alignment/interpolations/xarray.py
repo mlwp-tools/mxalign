@@ -1,3 +1,5 @@
+"""Grid-to-point interpolator based on ``xarray.Dataset.interp``."""
+
 from .base import BaseInterpolator
 from .registry import register_interpolator
 from mlwp_data_specs.specs.traits.spatial_coordinate import Space
@@ -7,11 +9,44 @@ import xarray as xr
 
 @register_interpolator
 class XarrayInterpolator(BaseInterpolator):
+    """Interpolate a grid dataset to points with ``xarray.Dataset.interp``.
+
+    Lat/lon-dimension grids are interpolated directly in longitude/latitude;
+    projected grids are interpolated in ``xc``/``yc`` after projecting the
+    target points with the source CRS (stacked grids are unstacked first).
+
+    Takes the constructor arguments of :class:`BaseInterpolator`: a point
+    ``target_dataset`` with ``longitude`` and ``latitude`` coordinates, and
+    ``**options`` that are passed to ``xarray.Dataset.interp`` (e.g.
+    ``method``).
+    """
+
     name = "xarray"
     source_space = Space.GRID
     target_space = Space.POINT
 
     def _interpolate(self, source_dataset: xr.Dataset) -> xr.Dataset:
+        """Interpolate a grid dataset to the target points.
+
+        Parameters
+        ----------
+        source_dataset : xr.Dataset
+            Grid dataset with ``longitude``/``latitude`` dimensions, ``xc``/``yc``
+            dimensions, or a stacked ``grid_index`` dimension.
+
+        Returns
+        -------
+        xr.Dataset
+            The source interpolated to the target points.
+
+        Raises
+        ------
+        ValueError
+            If a stacked source cannot be unstacked, or has unexpected
+            dimensions.
+        KeyError
+            If a projected source has no ``crs`` attribute.
+        """
         if "latitude" in source_dataset.dims and "longitude" in source_dataset.dims:
             ds_out = self._interpolate_from_latlon(source_dataset)
 
@@ -27,7 +62,25 @@ class XarrayInterpolator(BaseInterpolator):
         return ds_out
 
     def _interpolate_from_xcyc(self, source_dataset: xr.Dataset) -> xr.Dataset:
-        """Interpolate a projected (xc/yc) source to target lon/lat points."""
+        """Interpolate a projected (xc/yc) source to target lon/lat points.
+
+        Parameters
+        ----------
+        source_dataset : xr.Dataset
+            Grid dataset with ``xc``/``yc`` dimensions and a Cartopy CRS in
+            ``attrs["crs"]``.
+
+        Returns
+        -------
+        xr.Dataset
+            The source interpolated along a ``point_index`` dimension, with
+            the target ``longitude``/``latitude`` coordinates.
+
+        Raises
+        ------
+        KeyError
+            If the source dataset has no ``crs`` attribute.
+        """
         import cartopy.crs as ccrs
 
         try:
@@ -54,7 +107,18 @@ class XarrayInterpolator(BaseInterpolator):
         return ds_out
 
     def _interpolate_from_latlon(self, source_dataset: xr.Dataset) -> xr.Dataset:
-        """Interpolate a lat/lon-dim source directly to target lon/lat points."""
+        """Interpolate a lat/lon-dim source directly to target lon/lat points.
+
+        Parameters
+        ----------
+        source_dataset : xr.Dataset
+            Grid dataset with ``longitude`` and ``latitude`` dimensions.
+
+        Returns
+        -------
+        xr.Dataset
+            The source interpolated to the target points.
+        """
         longitude = self.target_dataset["longitude"]
         latitude = self.target_dataset["latitude"]
         ds_out = source_dataset.interp(

@@ -9,25 +9,41 @@ and linear barycentric (Delaunay) interpolation reproduce it exactly.
 Trait / accessor-level tests live in test_align_space.py.
 """
 
+import logging
+from pathlib import Path
+
 import cartopy.crs as ccrs
 import dask
 import numpy as np
 import pytest
 import xarray as xr
+from numpy.typing import ArrayLike
 
-from mxalign.interpolations import delaunay
-from mxalign.interpolations.delaunay import DelaunayInterpolator
-from mxalign.interpolations.interpolate import interpolate
-from mxalign.interpolations.xarray import XarrayInterpolator
-
+from mxalign.alignment.interpolations import delaunay
+from mxalign.alignment.interpolations.delaunay import DelaunayInterpolator
+from mxalign.alignment.interpolations.interpolate import interpolate
+from mxalign.alignment.interpolations.xarray import XarrayInterpolator
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 
-def _latlon_grid(lats, lons) -> xr.Dataset:
-    """Regular lat/lon grid with temp[i, j] = lat[i] + lon[j]."""
+def _latlon_grid(lats: ArrayLike, lons: ArrayLike) -> xr.Dataset:
+    """Build a regular lat/lon grid with ``temp[i, j] = lat[i] + lon[j]``.
+
+    Parameters
+    ----------
+    lats : ArrayLike
+        Latitudes of the grid.
+    lons : ArrayLike
+        Longitudes of the grid.
+
+    Returns
+    -------
+    xr.Dataset
+        Grid dataset with ``latitude`` and ``longitude`` dims.
+    """
     lats, lons = np.asarray(lats), np.asarray(lons)
     temp = lats[:, np.newaxis] + lons[np.newaxis, :]
     return xr.Dataset(
@@ -36,7 +52,21 @@ def _latlon_grid(lats, lons) -> xr.Dataset:
     )
 
 
-def _stacked_grid(lats, lons) -> xr.Dataset:
+def _stacked_grid(lats: ArrayLike, lons: ArrayLike) -> xr.Dataset:
+    """Build a regular lat/lon grid stacked to a ``grid_index`` dim.
+
+    Parameters
+    ----------
+    lats : ArrayLike
+        Latitudes of the grid.
+    lons : ArrayLike
+        Longitudes of the grid.
+
+    Returns
+    -------
+    xr.Dataset
+        Grid dataset with ``temp = lat + lon`` along ``grid_index``.
+    """
     return (
         _latlon_grid(lats, lons)
         .stack(grid_index=["latitude", "longitude"])
@@ -45,22 +75,47 @@ def _stacked_grid(lats, lons) -> xr.Dataset:
 
 
 @pytest.fixture
-def grid_latlon():
-    """3×3 regular lat/lon grid. temp[i, j] = lat[i] + lon[j]."""
+def grid_latlon() -> xr.Dataset:
+    """Provide a 3×3 regular lat/lon grid with ``temp[i, j] = lat[i] + lon[j]``.
+
+    Returns
+    -------
+    xr.Dataset
+        Grid dataset on latitudes and longitudes 0, 1, 2.
+    """
     return _latlon_grid([0.0, 1.0, 2.0], [0.0, 1.0, 2.0])
 
 
 @pytest.fixture
-def grid_stacked(grid_latlon):
-    """grid_latlon stacked to grid_index (required by DelaunayInterpolator)."""
+def grid_stacked(grid_latlon: xr.Dataset) -> xr.Dataset:
+    """Provide ``grid_latlon`` stacked to ``grid_index``.
+
+    Stacking is required by ``DelaunayInterpolator``.
+
+    Parameters
+    ----------
+    grid_latlon : xr.Dataset
+        Regular lat/lon grid fixture.
+
+    Returns
+    -------
+    xr.Dataset
+        Grid dataset along ``grid_index``.
+    """
     return grid_latlon.stack(grid_index=["latitude", "longitude"]).reset_index(
         "grid_index"
     )
 
 
 @pytest.fixture
-def target_points():
-    """3 target points: two at grid nodes, one at an interior location."""
+def target_points() -> xr.Dataset:
+    """Provide 3 target points: two at grid nodes, one at an interior location.
+
+    Returns
+    -------
+    xr.Dataset
+        Coordinate-only dataset with lat/lon along ``point_index``.
+    """
     return xr.Dataset(
         coords={
             "latitude": ("point_index", np.array([0.0, 0.5, 1.0])),
@@ -75,25 +130,71 @@ def target_points():
 
 
 class TestXarrayInterpolator:
-    def test_values_at_grid_nodes(self, grid_latlon, target_points):
+    """Group tests of ``XarrayInterpolator``."""
+
+    def test_values_at_grid_nodes(
+        self, grid_latlon: xr.Dataset, target_points: xr.Dataset
+    ) -> None:
+        """Check that values at grid nodes are reproduced exactly.
+
+        Parameters
+        ----------
+        grid_latlon : xr.Dataset
+            Regular lat/lon grid fixture.
+        target_points : xr.Dataset
+            Target point locations fixture.
+        """
         result = XarrayInterpolator(target_points)._interpolate(grid_latlon)
 
         # lat=0, lon=0 → 0+0=0; lat=1, lon=1 → 1+1=2
         assert result["temp"].isel(point_index=0).item() == pytest.approx(0.0)
         assert result["temp"].isel(point_index=2).item() == pytest.approx(2.0)
 
-    def test_value_at_interior_point(self, grid_latlon, target_points):
+    def test_value_at_interior_point(
+        self, grid_latlon: xr.Dataset, target_points: xr.Dataset
+    ) -> None:
+        """Check that an interior point is interpolated bilinearly.
+
+        Parameters
+        ----------
+        grid_latlon : xr.Dataset
+            Regular lat/lon grid fixture.
+        target_points : xr.Dataset
+            Target point locations fixture.
+        """
         result = XarrayInterpolator(target_points)._interpolate(grid_latlon)
 
         # lat=0.5, lon=0.5 → 0.5+0.5=1.0 (exact for bilinear on linear function)
         assert result["temp"].isel(point_index=1).item() == pytest.approx(1.0)
 
-    def test_output_has_point_index_dim(self, grid_latlon, target_points):
+    def test_output_has_point_index_dim(
+        self, grid_latlon: xr.Dataset, target_points: xr.Dataset
+    ) -> None:
+        """Check that the output has a ``point_index`` dim.
+
+        Parameters
+        ----------
+        grid_latlon : xr.Dataset
+            Regular lat/lon grid fixture.
+        target_points : xr.Dataset
+            Target point locations fixture.
+        """
         result = XarrayInterpolator(target_points)._interpolate(grid_latlon)
 
         assert "point_index" in result.dims
 
-    def test_output_has_latlon_coords_from_target(self, grid_latlon, target_points):
+    def test_output_has_latlon_coords_from_target(
+        self, grid_latlon: xr.Dataset, target_points: xr.Dataset
+    ) -> None:
+        """Check that the output carries the target lat/lon coords.
+
+        Parameters
+        ----------
+        grid_latlon : xr.Dataset
+            Regular lat/lon grid fixture.
+        target_points : xr.Dataset
+            Target point locations fixture.
+        """
         result = XarrayInterpolator(target_points)._interpolate(grid_latlon)
 
         np.testing.assert_array_equal(
@@ -103,7 +204,14 @@ class TestXarrayInterpolator:
             result["longitude"].values, target_points["longitude"].values
         )
 
-    def test_outside_domain_is_nan(self, grid_latlon):
+    def test_outside_domain_is_nan(self, grid_latlon: xr.Dataset) -> None:
+        """Check that a point outside the grid domain is NaN.
+
+        Parameters
+        ----------
+        grid_latlon : xr.Dataset
+            Regular lat/lon grid fixture.
+        """
         far_point = xr.Dataset(
             coords={
                 "latitude": ("point_index", np.array([10.0])),
@@ -114,7 +222,16 @@ class TestXarrayInterpolator:
 
         assert np.isnan(result["temp"].isel(point_index=0).item())
 
-    def test_projected_source_keeps_target_point_coords(self, target_points):
+    def test_projected_source_keeps_target_point_coords(
+        self, target_points: xr.Dataset
+    ) -> None:
+        """Check that a projected source keeps the target's point coordinates.
+
+        Parameters
+        ----------
+        target_points : xr.Dataset
+            Target point locations fixture.
+        """
         # xc/yc source with an identity projection, so xc == lon and yc == lat
         xc = yc = np.array([0.0, 1.0, 2.0])
         source = xr.Dataset(
@@ -136,6 +253,28 @@ class TestXarrayInterpolator:
         np.testing.assert_array_equal(result["station"].values, ["a", "b", "c"])
         np.testing.assert_allclose(result["temp"].values, [0.0, 1.0, 2.0])
 
+    def test_ensemble_values_per_member(
+        self, ds_grid_ens: xr.Dataset, target_points: xr.Dataset
+    ) -> None:
+        """Check that each member is interpolated on its own.
+
+        Parameters
+        ----------
+        ds_grid_ens : xr.Dataset
+            Stacked grid ensemble fixture, ``temp = 100 * member + lat + lon``.
+        target_points : xr.Dataset
+            Target point locations fixture.
+        """
+        source = ds_grid_ens.set_index(grid_index=["latitude", "longitude"]).unstack()
+
+        result = XarrayInterpolator(target_points)._interpolate(source)
+
+        members = ds_grid_ens["member"].values
+        np.testing.assert_allclose(
+            result["temp"].transpose("member", "point_index").values,
+            100.0 * members[:, np.newaxis] + np.array([0.0, 1.0, 2.0]),
+        )
+
 
 # ---------------------------------------------------------------------------
 # DelaunayInterpolator
@@ -143,24 +282,70 @@ class TestXarrayInterpolator:
 
 
 class TestDelaunayInterpolator:
-    def test_values_at_grid_nodes(self, grid_stacked, target_points):
+    """Group tests of ``DelaunayInterpolator``."""
+
+    def test_values_at_grid_nodes(
+        self, grid_stacked: xr.Dataset, target_points: xr.Dataset
+    ) -> None:
+        """Check that values at grid nodes are reproduced exactly.
+
+        Parameters
+        ----------
+        grid_stacked : xr.Dataset
+            Stacked grid fixture.
+        target_points : xr.Dataset
+            Target point locations fixture.
+        """
         result = DelaunayInterpolator(target_points)._interpolate(grid_stacked)
 
         assert result["temp"].isel(point_index=0).item() == pytest.approx(0.0)
         assert result["temp"].isel(point_index=2).item() == pytest.approx(2.0)
 
-    def test_value_at_interior_point(self, grid_stacked, target_points):
+    def test_value_at_interior_point(
+        self, grid_stacked: xr.Dataset, target_points: xr.Dataset
+    ) -> None:
+        """Check that an interior point is interpolated barycentrically.
+
+        Parameters
+        ----------
+        grid_stacked : xr.Dataset
+            Stacked grid fixture.
+        target_points : xr.Dataset
+            Target point locations fixture.
+        """
         result = DelaunayInterpolator(target_points)._interpolate(grid_stacked)
 
         # Barycentric interpolation is exact for any linear function
         assert result["temp"].isel(point_index=1).item() == pytest.approx(1.0)
 
-    def test_output_has_point_index_dim(self, grid_stacked, target_points):
+    def test_output_has_point_index_dim(
+        self, grid_stacked: xr.Dataset, target_points: xr.Dataset
+    ) -> None:
+        """Check that the output has a ``point_index`` dim.
+
+        Parameters
+        ----------
+        grid_stacked : xr.Dataset
+            Stacked grid fixture.
+        target_points : xr.Dataset
+            Target point locations fixture.
+        """
         result = DelaunayInterpolator(target_points)._interpolate(grid_stacked)
 
         assert "point_index" in result.dims
 
-    def test_output_has_latlon_coords_from_target(self, grid_stacked, target_points):
+    def test_output_has_latlon_coords_from_target(
+        self, grid_stacked: xr.Dataset, target_points: xr.Dataset
+    ) -> None:
+        """Check that the output carries the target lat/lon coords.
+
+        Parameters
+        ----------
+        grid_stacked : xr.Dataset
+            Stacked grid fixture.
+        target_points : xr.Dataset
+            Target point locations fixture.
+        """
         result = DelaunayInterpolator(target_points)._interpolate(grid_stacked)
 
         np.testing.assert_array_equal(
@@ -171,8 +356,22 @@ class TestDelaunayInterpolator:
         )
 
     def test_weights_shared_across_instances(
-        self, grid_stacked, target_points, monkeypatch
-    ):
+        self,
+        grid_stacked: xr.Dataset,
+        target_points: xr.Dataset,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Check that interpolation weights are cached across interpolator instances.
+
+        Parameters
+        ----------
+        grid_stacked : xr.Dataset
+            Stacked grid fixture.
+        target_points : xr.Dataset
+            Target point locations fixture.
+        monkeypatch : pytest.MonkeyPatch
+            Used to reset the weights cache and count weight builds.
+        """
         monkeypatch.setattr(delaunay, "_WEIGHTS_CACHE", {})
         calls = []
         build = delaunay._build_weight_matrix
@@ -189,8 +388,22 @@ class TestDelaunayInterpolator:
         assert len(calls) == 1
 
     def test_cache_distinguishes_grids_with_same_extent(
-        self, grid_stacked, target_points, monkeypatch
-    ):
+        self,
+        grid_stacked: xr.Dataset,
+        target_points: xr.Dataset,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Check that the weights cache tells apart grids with the same extent.
+
+        Parameters
+        ----------
+        grid_stacked : xr.Dataset
+            Stacked grid fixture.
+        target_points : xr.Dataset
+            Target point locations fixture.
+        monkeypatch : pytest.MonkeyPatch
+            Used to reset the weights cache.
+        """
         monkeypatch.setattr(delaunay, "_WEIGHTS_CACHE", {})
         # Same shape, first latitude and last longitude, different interior
         other = _stacked_grid(lats=[0.0, 1.0, 2.0], lons=[0.0, 1.5, 2.0])
@@ -200,7 +413,14 @@ class TestDelaunayInterpolator:
 
         assert result["temp"].isel(point_index=1).item() == pytest.approx(1.0)
 
-    def test_rechunk_keeps_block_size_bounded(self, target_points):
+    def test_rechunk_keeps_block_size_bounded(self, target_points: xr.Dataset) -> None:
+        """Check that rechunking ``grid_index`` keeps blocks within the chunk budget.
+
+        Parameters
+        ----------
+        target_points : xr.Dataset
+            Target point locations fixture.
+        """
         grid = _stacked_grid(lats=np.linspace(0, 2, 20), lons=np.linspace(0, 2, 50))
         n_steps, n_source = 64, grid.sizes["grid_index"]
         source = (
@@ -217,7 +437,14 @@ class TestDelaunayInterpolator:
         assert rows_per_block * n_source * 8 <= 64 * 1024
         np.testing.assert_allclose(result["temp"].isel(step=0).values, [0.0, 1.0, 2.0])
 
-    def test_outside_convex_hull_is_nan(self, grid_stacked):
+    def test_outside_convex_hull_is_nan(self, grid_stacked: xr.Dataset) -> None:
+        """Check that a point outside the convex hull is NaN.
+
+        Parameters
+        ----------
+        grid_stacked : xr.Dataset
+            Stacked grid fixture.
+        """
         far_point = xr.Dataset(
             coords={
                 "latitude": ("point_index", np.array([10.0])),
@@ -227,6 +454,72 @@ class TestDelaunayInterpolator:
         result = DelaunayInterpolator(far_point)._interpolate(grid_stacked)
 
         assert np.isnan(result["temp"].isel(point_index=0).item())
+
+    @pytest.mark.parametrize("chunked", [False, True])
+    @pytest.mark.parametrize(
+        "dims", [("member", "grid_index"), ("grid_index", "member")]
+    )
+    def test_ensemble_keeps_dim_order(
+        self,
+        ds_grid_ens: xr.Dataset,
+        target_points: xr.Dataset,
+        dims: tuple[str, str],
+        chunked: bool,
+    ) -> None:
+        """Check that ``member`` is interpolated wherever it sits in the dims.
+
+        ``point_index`` takes the place of ``grid_index`` in the output, so a
+        ``member`` dimension after ``grid_index`` stays after ``point_index``.
+
+        Parameters
+        ----------
+        ds_grid_ens : xr.Dataset
+            Stacked grid ensemble fixture, ``temp = 100 * member + lat + lon``.
+        target_points : xr.Dataset
+            Target point locations fixture.
+        dims : tuple[str, str]
+            Dimension order of the source variable.
+        chunked : bool
+            Whether the source is dask-backed with several ``grid_index`` chunks.
+        """
+        source = ds_grid_ens.transpose(*dims)
+        if chunked:
+            source = source.chunk({"grid_index": 4, "member": 1})
+
+        result = DelaunayInterpolator(target_points)._interpolate(source)
+
+        out_dims = tuple("point_index" if d == "grid_index" else d for d in dims)
+        assert result["temp"].dims == out_dims
+        members = ds_grid_ens["member"].values
+        np.testing.assert_allclose(
+            result["temp"].transpose("member", "point_index").values,
+            100.0 * members[:, np.newaxis] + np.array([0.0, 1.0, 2.0]),
+        )
+
+    def test_variable_without_grid_index_is_skipped(
+        self,
+        grid_stacked: xr.Dataset,
+        target_points: xr.Dataset,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Check that a variable without ``grid_index`` is dropped with a warning.
+
+        Parameters
+        ----------
+        grid_stacked : xr.Dataset
+            Stacked grid fixture.
+        target_points : xr.Dataset
+            Target point locations fixture.
+        caplog : pytest.LogCaptureFixture
+            Captures the warning.
+        """
+        source = grid_stacked.assign(offset=("step", [1.0, 2.0]))
+
+        with caplog.at_level(logging.WARNING, logger=delaunay.__name__):
+            result = DelaunayInterpolator(target_points)._interpolate(source)
+
+        assert list(result.data_vars) == ["temp"]
+        assert any("'offset'" in r.getMessage() for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -247,8 +540,27 @@ GRID_ATTRS = {
     [(XarrayInterpolator, "grid_latlon"), (DelaunayInterpolator, "grid_stacked")],
 )
 def test_point_output_drops_grid_attrs(
-    interpolator, source, target_points, tmp_path, request
-):
+    interpolator: type[XarrayInterpolator] | type[DelaunayInterpolator],
+    source: str,
+    target_points: xr.Dataset,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """Check that point output drops grid-only attrs and can be saved to netCDF.
+
+    Parameters
+    ----------
+    interpolator : type[XarrayInterpolator] | type[DelaunayInterpolator]
+        Interpolator class under test.
+    source : str
+        Name of the source grid fixture.
+    target_points : xr.Dataset
+        Target point locations fixture.
+    tmp_path : Path
+        Temporary directory to write the output to.
+    request : pytest.FixtureRequest
+        Used to look up the source grid fixture by name.
+    """
     source = request.getfixturevalue(source).assign_attrs(GRID_ATTRS)
 
     result = interpolator(target_points).interpolate(source)
@@ -258,7 +570,18 @@ def test_point_output_drops_grid_attrs(
     result.to_netcdf(tmp_path / "points.nc")  # a cartopy CRS attr would fail here
 
 
-def test_interpolate_returns_same_container_type(grid_latlon, target_points):
+def test_interpolate_returns_same_container_type(
+    grid_latlon: xr.Dataset, target_points: xr.Dataset
+) -> None:
+    """Check that ``interpolate`` returns the same container type it is given.
+
+    Parameters
+    ----------
+    grid_latlon : xr.Dataset
+        Regular lat/lon grid fixture.
+    target_points : xr.Dataset
+        Target point locations fixture.
+    """
     out = interpolate(
         {"a": grid_latlon.assign_attrs(GRID_ATTRS)}, target_points, "xarray"
     )

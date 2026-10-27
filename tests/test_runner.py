@@ -1,15 +1,46 @@
-import pytest
+"""Tests for the pipeline ``Runner``."""
 
-from mxalign.runner import Runner
+from pathlib import Path
+
+import pytest
+import xarray as xr
+from pydantic import ValidationError
+
+from mxalign.pipeline.runner import Runner
 
 
 def _runner(datasets: dict, alignment: dict) -> Runner:
+    """Build a ``Runner`` with pre-loaded datasets and an alignment section.
+
+    Parameters
+    ----------
+    datasets : dict
+        Datasets by name, assigned directly instead of being loaded.
+    alignment : dict
+        The ``alignment`` section of the config.
+
+    Returns
+    -------
+    Runner
+        Runner ready to transform or align the given datasets.
+    """
     runner = Runner({"datasets": {}, "alignment": alignment})
     runner.datasets = datasets
     return runner
 
 
-def test_align_runs_time_alignment_without_time_section(ds_fcst, ds_obs):
+def test_align_runs_time_alignment_without_time_section(
+    ds_fcst: xr.Dataset, ds_obs: xr.Dataset
+) -> None:
+    """Check that ``align`` runs time alignment when no time section is given.
+
+    Parameters
+    ----------
+    ds_fcst : xr.Dataset
+        Point forecast fixture.
+    ds_obs : xr.Dataset
+        Point observation fixture.
+    """
     runner = _runner(
         {"fcst": ds_fcst, "obs": ds_obs},
         {"reference": "obs", "broadcast_nans": False},
@@ -19,19 +50,74 @@ def test_align_runs_time_alignment_without_time_section(ds_fcst, ds_obs):
     assert runner.datasets["obs"].mx.is_forecast()
 
 
-def test_align_time_rejects_unknown_options(ds_fcst, ds_obs):
-    runner = _runner({"fcst": ds_fcst, "obs": ds_obs}, {"reference": "obs"})
-    with pytest.raises(ValueError, match="Unknown option.*return_as"):
-        runner.align_time({"return_as": "forecast"}, reference_name="obs")
+def test_align_mixes_deterministic_and_ensemble(
+    ds_fcst: xr.Dataset, ds_fcst_ens: xr.Dataset, ds_obs: xr.Dataset
+) -> None:
+    """Check that ``align`` with NaN broadcasting handles an ensemble.
+
+    The deterministic forecast and the observation must end up missing where
+    the ensemble is, and the ensemble must be missing all or none of its
+    members.
+
+    Parameters
+    ----------
+    ds_fcst : xr.Dataset
+        Point forecast fixture.
+    ds_fcst_ens : xr.Dataset
+        Point forecast ensemble fixture.
+    ds_obs : xr.Dataset
+        Point observation fixture, used as the reference.
+    """
+    ens = ds_fcst_ens.copy(deep=True)
+    ens["temp"][{"member": 1, "lead_time": 1}] = float("nan")
+    runner = _runner({"obs": ds_obs, "det": ds_fcst, "ens": ens}, {"reference": "obs"})
+
+    runner.align()
+
+    out = runner.datasets
+    missing = out["ens"]["temp"].isnull()
+    xr.testing.assert_equal(missing.any("member"), missing.all("member"))
+    for name in ("obs", "det"):
+        xr.testing.assert_equal(out[name]["temp"].isnull(), missing.any("member"))
+    assert missing.sel(lead_time="6h").all()
 
 
-def test_transform_datasets_without_transformations_section(ds_obs):
+def test_align_time_rejects_unknown_options() -> None:
+    """Check that unknown ``alignment.time`` options are rejected."""
+    with pytest.raises(ValidationError, match="alignment.time.return_as"):
+        Runner(
+            {
+                "datasets": {},
+                "alignment": {"reference": "obs", "time": {"return_as": "forecast"}},
+            }
+        )
+
+
+def test_transform_datasets_without_transformations_section(
+    ds_obs: xr.Dataset,
+) -> None:
+    """Check that datasets pass through unchanged without a transformations section.
+
+    Parameters
+    ----------
+    ds_obs : xr.Dataset
+        Point observation fixture.
+    """
     runner = _runner({"obs": ds_obs}, {"reference": "obs"})
     runner.transform_datasets()
     assert runner.datasets["obs"] is ds_obs
 
 
-def test_align_saves_merged_datasets(ds_obs, tmp_path):
+def test_align_saves_merged_datasets(ds_obs: xr.Dataset, tmp_path: Path) -> None:
+    """Check that ``align`` saves a single merged file with ``datasets: merge``.
+
+    Parameters
+    ----------
+    ds_obs : xr.Dataset
+        Point observation fixture.
+    tmp_path : Path
+        Temporary directory to save the output in.
+    """
     runner = _runner(
         {"a": ds_obs, "b": ds_obs.copy()},
         {

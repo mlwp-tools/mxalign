@@ -23,10 +23,11 @@ dependencies = [
     "mlwp-data-specs",
     "mlwp-data-loaders",
     "pandas>=2.2",
+    "pydantic>=2",
 ]
 
 [project.scripts]
-mxalign = "mxalign.cli:main"
+mxalign = "mxalign.pipeline.cli:main"
 
 [project.optional-dependencies]
 earthkit = [
@@ -50,6 +51,28 @@ build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff.lint]
+# ANN: type annotations on all arguments and return values; D: docstrings
+extend-select = ["ANN", "D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+# Orphaned loader that imports removed modules; pending removal or port to mlwp-data-loaders
+"src/mxalign/loaders/ifs_forecast.py" = ["ANN", "D"]
+
+[tool.numpydoc_validation]
+checks = [
+    "all",   # report on all checks, except the below
+    "EX01",  # no "Examples" section required
+    "SA01",  # no "See Also" section required
+    "ES01",  # no "Extended Summary" section required
+]
+# __init__ parameters are documented in the class docstring (numpydoc convention)
+exclude = ['\.__init__$']
+exclude_files = ['src/mxalign/loaders/ifs_forecast\.py']
 
 [dependency-groups]
 dev = [
