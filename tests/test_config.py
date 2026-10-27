@@ -31,8 +31,8 @@ def test_example_config_validates():
 
 
 def test_unknown_top_level_key_is_rejected():
-    with pytest.raises(ValidationError, match="alignmnet"):
-        load_config(_config(alignmnet={"reference": "fc"}))
+    with pytest.raises(ValidationError, match="not_a_section"):
+        load_config(_config(not_a_section={"reference": "fc"}))
 
 
 def test_missing_alignment_reference_is_rejected():
