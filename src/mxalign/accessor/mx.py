@@ -7,8 +7,8 @@ from mlwp_data_specs.specs.traits.spatial_coordinate import Space
 from mlwp_data_specs.specs.traits.time_coordinate import Time
 
 from ..utils.projections import create_cartopy_crs, BUILTIN
-from ..align import time as _time
-from ..align import space as _space
+from ..alignment import time as _time
+from ..alignment import space as _space
 
 
 @xr.register_dataset_accessor("mx")

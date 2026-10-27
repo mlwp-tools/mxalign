@@ -1,13 +1,16 @@
 from .transformations.transform import transform
 from .transformations.registry import available_transformations, register_transformation
-from .interpolations.interpolate import interpolate
-from .interpolations.registry import available_interpolations, register_interpolator
-from .align.time import align_time
-from .align.space import align_space
+from .alignment.interpolations.interpolate import interpolate
+from .alignment.interpolations.registry import (
+    available_interpolations,
+    register_interpolator,
+)
+from .alignment.time import align_time
+from .alignment.space import align_space
 
-from . import accessors
+from . import accessor
+from . import alignment
 from . import transformations
-from . import interpolations
 
 __all__ = [
     "transform",
@@ -18,7 +21,7 @@ __all__ = [
     "register_interpolator",
     "align_time",
     "align_space",
-    "accessors",
+    "accessor",
+    "alignment",
     "transformations",
-    "interpolations",
 ]

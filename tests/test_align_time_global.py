@@ -19,7 +19,7 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from mxalign.align.time import align_time
+from mxalign.alignment.time import align_time
 
 T0 = np.datetime64("2020-01-01T00:00", "ns")
 H6 = np.timedelta64(6, "h")
@@ -143,7 +143,7 @@ class TestReferenceTimePruning:
         f2 = fcst(["2020-01-01", "2020-01-02", "2020-01-03"], ["0h", "6h", "12h"])
         ref = obs(pd.date_range("2020-01-03", "2020-01-05", freq="3h"))
 
-        with caplog.at_level(logging.WARNING, logger="mxalign.align.time"):
+        with caplog.at_level(logging.WARNING, logger="mxalign.alignment.time"):
             out = align_time({"f1": f1, "f2": f2, "ref": ref}, reference="ref")
 
         np.testing.assert_array_equal(

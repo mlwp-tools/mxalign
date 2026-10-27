@@ -15,10 +15,10 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from mxalign.interpolations import delaunay
-from mxalign.interpolations.delaunay import DelaunayInterpolator
-from mxalign.interpolations.interpolate import interpolate
-from mxalign.interpolations.xarray import XarrayInterpolator
+from mxalign.alignment.interpolations import delaunay
+from mxalign.alignment.interpolations.delaunay import DelaunayInterpolator
+from mxalign.alignment.interpolations.interpolate import interpolate
+from mxalign.alignment.interpolations.xarray import XarrayInterpolator
 
 
 # ---------------------------------------------------------------------------

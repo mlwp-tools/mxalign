@@ -5,8 +5,8 @@ from mlwp_data_loaders import load_and_validate_dataset
 
 from .utils.config import Config
 from .transformations.transform import transform
-from .align.time import align_time
-from .align.nans import broadcast_nans
+from .alignment.time import align_time
+from .alignment.nans import broadcast_nans
 from .utils.save import save_dataset, save_metrics
 from .verification import Metric
 

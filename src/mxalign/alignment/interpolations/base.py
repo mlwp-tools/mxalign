@@ -1,6 +1,6 @@
 import xarray as xr
 from mlwp_data_specs.specs.traits.spatial_coordinate import Space
-from ..utils.traits import update_space_trait
+from ...utils.traits import update_space_trait
 
 # Attributes set by ds.mx.add_crs / add_grid_mapping that describe a source grid
 GRID_ONLY_ATTRS = ("crs", "grid_mapping")
