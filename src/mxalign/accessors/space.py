@@ -2,9 +2,8 @@ import xarray as xr
 import cartopy.crs as ccrs
 import numpy as np
 
-from ..properties.properties import Space
-from ..properties.utils import properties_from_attrs
-
+from mlwp_data_specs.api import SPACE_TRAIT_ATTR
+from mlwp_data_specs.specs.traits.spatial_coordinate import Space
 from ..utils.projections import create_cartopy_crs, BUILTIN
 
 # Tolerance in degrees that the coordinates of two grids can differ while still being interpreted as the same grid.
@@ -15,7 +14,7 @@ COORD_TOLERANCE = 0.0001
 @xr.register_dataset_accessor("space")
 class SpaceAccessor:
     def __init__(self, ds):
-        self._space = properties_from_attrs(ds).space
+        self._space = ds.attrs[SPACE_TRAIT_ATTR]
         self._ds = ds
 
     def is_grid(self):
