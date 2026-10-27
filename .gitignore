@@ -11,3 +11,6 @@ wheels/
 
 # Presentations
 presentation/
+
+# Documentation build
+site/

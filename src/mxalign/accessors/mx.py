@@ -234,11 +234,10 @@ class MxAccessor:
         ----------
         ds2 : xr.Dataset
             The reference dataset to align to.
-        method : str
-            Interpolation method for grid→point alignment. One of "xarray" or
-            "delaunay" (default "xarray"). Ignored for grid→grid.
         **kwargs
-            Passed through to the interpolator.
+            ``method`` selects the interpolator for grid→point alignment: one
+            of "xarray" or "delaunay" (default "xarray"). All other keywords
+            are passed through to the interpolator. Ignored for grid→grid.
         """
         if self.is_grid():
             if ds2.mx.is_grid():
