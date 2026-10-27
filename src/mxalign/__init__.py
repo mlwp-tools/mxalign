@@ -1,30 +1,29 @@
-from .pipeline.transformations.transform import transform
-from .pipeline.transformations.registry import (
-    available_transformations,
-    register_transformation,
-)
+"""Align and verify weather forecast and observation datasets with xarray."""
+
+from . import accessor, alignment, pipeline
 from .alignment.interpolations.interpolate import interpolate
 from .alignment.interpolations.registry import (
     available_interpolations,
     register_interpolator,
 )
-from .alignment.time import align_time
 from .alignment.space import align_space
-
-from . import accessor
-from . import alignment
-from . import pipeline
+from .alignment.time import align_time
+from .pipeline.transformations.registry import (
+    available_transformations,
+    register_transformation,
+)
+from .pipeline.transformations.transform import transform
 
 __all__ = [
-    "transform",
-    "available_transformations",
-    "register_transformation",
-    "interpolate",
-    "available_interpolations",
-    "register_interpolator",
-    "align_time",
-    "align_space",
     "accessor",
+    "align_space",
+    "align_time",
     "alignment",
+    "available_interpolations",
+    "available_transformations",
+    "interpolate",
     "pipeline",
+    "register_interpolator",
+    "register_transformation",
+    "transform",
 ]

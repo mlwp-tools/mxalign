@@ -1,3 +1,5 @@
+"""Spatial alignment of datasets to a reference dataset."""
+
 import numpy as np
 import xarray as xr
 
@@ -9,7 +11,7 @@ COORD_TOLERANCE = 0.0001
 def align_space(
     datasets: xr.Dataset | list[xr.Dataset] | dict[str, xr.Dataset],
     reference: str | xr.Dataset,
-    **kwargs,
+    **kwargs: object,
 ) -> xr.Dataset | list[xr.Dataset] | dict[str, xr.Dataset]:
     """Align all datasets spatially to a reference dataset.
 
@@ -18,10 +20,19 @@ def align_space(
 
     Parameters
     ----------
-    datasets:
+    datasets : xr.Dataset or list of xr.Dataset or dict of str to xr.Dataset
         Single dataset, list, or dict of datasets to align.
-    reference:
+    reference : str or xr.Dataset
         Key into *datasets* dict, or a dataset to align to.
+    **kwargs : object
+        Forwarded to ``ds.mx.align_space_with``.
+
+    Returns
+    -------
+    xr.Dataset or list of xr.Dataset or dict of str to xr.Dataset
+        The aligned datasets: a dict with the same keys if ``datasets`` is a
+        dict, otherwise a single dataset if there is only one, else a list.
+        The reference dataset itself is returned unchanged.
     """
     if isinstance(datasets, dict):
         keys = list(datasets.keys())
@@ -49,8 +60,29 @@ def align_space(
 # --- Pairwise alignment (used by ``ds.mx.align_space_with``) ---
 
 
-def align_grid_grid(ds1: xr.Dataset, ds2: xr.Dataset, **kwargs) -> xr.Dataset:
-    """Return ``ds1`` unchanged if its grid matches ``ds2``'s within ``COORD_TOLERANCE``; raises otherwise."""
+def align_grid_grid(ds1: xr.Dataset, ds2: xr.Dataset, **kwargs: object) -> xr.Dataset:
+    """Return ``ds1`` unchanged if its grid matches ``ds2``'s within ``COORD_TOLERANCE``.
+
+    Parameters
+    ----------
+    ds1 : xr.Dataset
+        Grid dataset to align.
+    ds2 : xr.Dataset
+        Reference grid dataset.
+    **kwargs : object
+        Ignored.
+
+    Returns
+    -------
+    xr.Dataset
+        ``ds1``, unchanged.
+
+    Raises
+    ------
+    NotImplementedError
+        If the ``longitude``/``latitude`` coordinates of the two grids differ
+        by more than ``COORD_TOLERANCE`` (regridding is not implemented).
+    """
     if np.array_equal(
         ds1["longitude"].values, ds2["longitude"].values
     ) and np.array_equal(ds1["latitude"].values, ds2["latitude"].values):
@@ -69,9 +101,31 @@ def align_grid_grid(ds1: xr.Dataset, ds2: xr.Dataset, **kwargs) -> xr.Dataset:
 
 
 def align_grid_point(
-    ds1: xr.Dataset, ds2: xr.Dataset, method: str = "xarray", **kwargs
+    ds1: xr.Dataset, ds2: xr.Dataset, method: str = "xarray", **kwargs: object
 ) -> xr.Dataset:
-    """Interpolate grid ``ds1`` to the point locations of ``ds2`` using the named interpolator."""
+    """Interpolate grid ``ds1`` to the point locations of ``ds2``.
+
+    Parameters
+    ----------
+    ds1 : xr.Dataset
+        Source grid dataset.
+    ds2 : xr.Dataset
+        Target point dataset.
+    method : str, default "xarray"
+        Name of a registered interpolator, e.g. ``"xarray"`` or ``"delaunay"``.
+    **kwargs : object
+        Options passed to the interpolator constructor.
+
+    Returns
+    -------
+    xr.Dataset
+        ``ds1`` interpolated to the points of ``ds2``.
+
+    Raises
+    ------
+    ValueError
+        If ``method`` is not a registered interpolator.
+    """
     from .interpolations.registry import get_interpolation
 
     interp_cls = get_interpolation(method)

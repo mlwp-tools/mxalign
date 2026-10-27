@@ -1,3 +1,5 @@
+"""Expansion of date-templated file path patterns over reference and lead times."""
+
 import itertools
 import re
 import string
@@ -14,13 +16,15 @@ class Dates:
 
     Parameters
     ----------
-    start, end:
-        First and last reference time of the range.
-    period:
+    start : str or datetime or np.datetime64
+        First reference time of the range.
+    end : str or datetime or np.datetime64
+        Last reference time of the range.
+    period : str or np.timedelta64
         Step between successive reference times (e.g. ``"1D"``).
-    range:
+    range : str or np.timedelta64
         Forecast horizon — lead times run from 0 to ``range`` inclusive.
-    step:
+    step : str or np.timedelta64
         Increment between lead times (e.g. ``"1h"``).
     """
 
@@ -31,18 +35,33 @@ class Dates:
         period: str | np.timedelta64,
         range: str | np.timedelta64,
         step: str | np.timedelta64,
-    ):
+    ) -> None:
         self.reference_times = pd.date_range(start, end, freq=pd.Timedelta(period))
         self.lead_times = pd.timedelta_range(
             pd.Timedelta(0), pd.Timedelta(range), freq=pd.Timedelta(step)
         )
 
     def substitute(self, path: str) -> list[str]:
-        """Expand ``path`` over all (reference_time, lead_time) pairs; return sorted unique paths.
+        """Expand ``path`` over all (reference_time, lead_time) pairs.
 
-        ``path`` uses :meth:`str.format` syntax with the fields ``reference_time`` and
-        ``valid_time`` (datetimes, e.g. ``{reference_time:%Y%m%d%H}``) and ``lead_time``
-        (integer hours, e.g. ``{lead_time:03d}``).
+        Parameters
+        ----------
+        path : str
+            Path pattern in :meth:`str.format` syntax with the fields
+            ``reference_time`` and ``valid_time`` (datetimes, e.g.
+            ``{reference_time:%Y%m%d%H}``) and ``lead_time`` (integer hours,
+            e.g. ``{lead_time:03d}``).
+
+        Returns
+        -------
+        list of str
+            Sorted unique expanded paths.
+
+        Raises
+        ------
+        ValueError
+            If ``path`` uses ``{lead_time}`` and a lead time is not a whole
+            number of hours.
         """
         fields = _field_names(path)
         if "lead_time" in fields and (self.lead_times % HOUR != pd.Timedelta(0)).any():
@@ -65,7 +84,19 @@ class Dates:
 
 
 def _field_names(path: str) -> set[str]:
-    """Return the top-level replacement field names used in a :meth:`str.format` pattern."""
+    """Return the top-level replacement field names used in a format pattern.
+
+    Parameters
+    ----------
+    path : str
+        Pattern in :meth:`str.format` syntax.
+
+    Returns
+    -------
+    set of str
+        Field names, with attribute access and indexing stripped (e.g.
+        ``{a.b}`` and ``{a[0]}`` both give ``"a"``).
+    """
     return {
         re.split(r"[.\[]", name)[0]
         for _, name, _, _ in string.Formatter().parse(path)

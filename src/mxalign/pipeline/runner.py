@@ -1,27 +1,39 @@
-import os
-import xarray as xr
+"""Runner that executes the config-driven load, transform, align and verify pipeline."""
 
+import os
+
+import xarray as xr
 from mlwp_data_loaders import load_and_validate_dataset
 
+from ..alignment.nans import broadcast_nans
+from ..alignment.time import align_time
 from .config import (
     PipelineConfig,
     SpaceAlignmentConfig,
     TimeAlignmentConfig,
     load_config,
 )
-from .transformations.transform import transform
-from ..alignment.time import align_time
-from ..alignment.nans import broadcast_nans
 from .save import save_dataset, save_metrics
+from .transformations.transform import transform
 from .verification import Metric
 
 
 class Runner:
-    def __init__(self, config: str | dict):
+    """Run the verification pipeline described by a pipeline config.
+
+    Parameters
+    ----------
+    config : str or dict
+        Path to a YAML config file, or the already-parsed config; validated
+        with :func:`load_config`.
+    """
+
+    def __init__(self, config: str | dict) -> None:
         self.config: PipelineConfig = load_config(config)
         self.datasets = {}
 
-    def run(self):
+    def run(self) -> None:
+        """Load, transform, align and verify the datasets."""
         # 1. Load the datasets
         self.load_datasets()
 
@@ -30,7 +42,12 @@ class Runner:
         self.align()
         self.verify()
 
-    def load_datasets(self):
+    def load_datasets(self) -> None:
+        """Load every configured dataset into ``self.datasets``.
+
+        Missing files are skipped with a message. Optionally selects the
+        configured variables and attaches the configured grid mapping.
+        """
         for name, config_ds in self.config.datasets.items():
             variables = config_ds.variables
             grid_mapping = config_ds.grid_mapping
@@ -60,7 +77,12 @@ class Runner:
 
             self.datasets[name] = ds
 
-    def transform_datasets(self):
+    def transform_datasets(self) -> None:
+        """Apply the configured transformations to the loaded datasets.
+
+        Each transformation is applied to the datasets it lists, or to all
+        datasets if it lists none.
+        """
         if self.config.transformations is None:
             return
         for transformation, config_trans in self.config.transformations.items():
@@ -74,7 +96,12 @@ class Runner:
                     name=transformation, datasets=ds, **config_trans.kwargs
                 )
 
-    def align(self):
+    def align(self) -> None:
+        """Align the datasets in time and space to the reference dataset.
+
+        Afterwards NaNs are optionally broadcast across datasets and the
+        aligned datasets are optionally saved, as configured.
+        """
         config = self.config.alignment
         reference = config.reference
 
@@ -105,7 +132,13 @@ class Runner:
                 )
                 save_dataset(save.method, "merged", ds, **kwargs)
 
-    def verify(self):
+    def verify(self) -> None:
+        """Compute the configured metrics against the reference dataset.
+
+        The metrics are computed for every non-reference dataset on the
+        variables common to all datasets, stored in ``self.metrics`` with
+        ``model`` and ``metric`` dimensions, and optionally saved.
+        """
         config = self.config.verification
         if config is None:
             return
@@ -145,13 +178,32 @@ class Runner:
 
     def align_time(
         self, config: TimeAlignmentConfig | None, reference_name: str | None = None
-    ):
+    ) -> None:
+        """Align ``self.datasets`` in time to the reference dataset.
+
+        Parameters
+        ----------
+        config : TimeAlignmentConfig or None
+            Time alignment options; defaults are used if None.
+        reference_name : str or None
+            Name of the reference dataset.
+        """
         lead_time = config.lead_time if config is not None else None
         self.datasets = align_time(
             self.datasets, reference=reference_name, lead_time=lead_time
         )
 
-    def align_space(self, reference: str, config: SpaceAlignmentConfig):
+    def align_space(self, reference: str, config: SpaceAlignmentConfig) -> None:
+        """Align every non-reference dataset in space to the reference dataset.
+
+        Parameters
+        ----------
+        reference : str
+            Name of the reference dataset.
+        config : SpaceAlignmentConfig
+            Interpolator/regridder options, picked by the kind of alignment
+            each dataset needs (see :func:`get_spatial_alignment`).
+        """
         ds_ref = self.datasets[reference]
         for name, ds in self.datasets.items():
             if name != reference:
@@ -160,7 +212,22 @@ class Runner:
                 self.datasets[name] = ds.mx.align_space_with(ds_ref, **options)
 
 
-def get_spatial_alignment(ds, reference):
+def get_spatial_alignment(ds: xr.Dataset, reference: xr.Dataset) -> str:
+    """Return the kind of spatial alignment needed to align ``ds`` to ``reference``.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Dataset to align.
+    reference : xr.Dataset
+        Reference dataset.
+
+    Returns
+    -------
+    str
+        ``"interpolation"`` for grid to points, ``"regrid"`` for grid to
+        grid, and ``"null"`` otherwise.
+    """
     if reference.mx.is_point() and ds.mx.is_grid():
         return "interpolation"
     if reference.mx.is_grid() and ds.mx.is_grid():

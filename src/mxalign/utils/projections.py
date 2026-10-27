@@ -1,3 +1,5 @@
+"""Cartopy projection helpers and builtin grid definitions (CERRA, UWCW)."""
+
 import cartopy.crs as ccrs
 
 
@@ -10,19 +12,23 @@ def create_cartopy_crs(
 
     Parameters
     ----------
-    projection:
+    projection : str
         Key into :data:`PROJECTIONS` (e.g. ``"lcc"``, ``"latlon"``).
-    kws_projection:
+    kws_projection : dict
         Keyword arguments forwarded to the projection constructor.
-    kws_globe:
-        Optional keyword arguments forwarded to :class:`cartopy.crs.Globe`.
+    kws_globe : dict, optional
+        Keyword arguments forwarded to :class:`cartopy.crs.Globe`.
+
+    Returns
+    -------
+    ccrs.Projection
+        The constructed Cartopy CRS.
 
     Raises
     ------
     ValueError
         If ``projection`` is not a key in :data:`PROJECTIONS`.
     """
-
     # - Get the cartopy projection class
     try:
         proj_cls = PROJECTIONS[projection]

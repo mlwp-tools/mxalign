@@ -1,3 +1,5 @@
+"""Propagation of NaN masks across a collection of datasets."""
+
 import xarray as xr
 import itertools
 
@@ -5,11 +7,21 @@ import itertools
 def broadcast_nans(
     datasets: xr.Dataset | list[xr.Dataset] | dict[str, xr.Dataset],
 ) -> xr.Dataset | list[xr.Dataset] | dict[str, xr.Dataset]:
-    """Propagate NaN masks across all datasets so a NaN at any coordinate is NaN in all.
+    """Propagate NaN masks so a NaN at a coordinate in any dataset is NaN in all.
 
     Operates pairwise over deep copies; only shared coordinates and variables are considered.
-    """
 
+    Parameters
+    ----------
+    datasets : xr.Dataset or list of xr.Dataset or dict of str to xr.Dataset
+        Datasets to propagate NaNs across. A single dataset is returned as is.
+
+    Returns
+    -------
+    xr.Dataset or list of xr.Dataset or dict of str to xr.Dataset
+        Deep copies of the input datasets with NaN masks propagated, in the
+        same container type as ``datasets``.
+    """
     if isinstance(datasets, xr.Dataset):
         return datasets
     elif isinstance(datasets, dict):
