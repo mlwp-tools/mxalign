@@ -4,45 +4,42 @@
 
 ## What is this?
 
-`mxalign` is an `xarray`-based package designed for the alignment and verification of meteorological datasets. It standardizes operations across datasets by attaching properties along three main axes:
-- **Space:** Grid or point-based data
-- **Time:** Forecasts, observations, or climatology
-- **Uncertainty:** Deterministic, ensemble, or quantile forecasts
+`mxalign` is an `xarray`-based package for aligning meteorological datasets. It operates on datasets that carry **traits** — metadata attributes that describe the nature of a dataset along three axes:
 
-Currently, `mxalign` also acts as a full execution engine. It can load datasets (e.g., Anemoi inference outputs, observation datasets), apply transformations, align datasets in both space and time to match a reference, safely broadcast NaNs, and execute verification metrics on scaled Dask clusters (Local or Slurm).
+`mxalign` is an `xarray`-based package for aligning meteorological datasets. It operates on datasets that carry **traits** — metadata attributes that describe the nature of a dataset along three axes:
+- **Space:** `grid` or `point`
+- **Time:** `forecast`, `observation`, or `climatology`
+- **Uncertainty:** `deterministic`, `ensemble`, or `quantile`
 
-> ⚠️ **Roadmap & Future Architecture Changes (planned for v0.2.0):**
-> Currently, `mxalign` handles both alignment and the execution of the verification tooling pipeline, including loading and validation. In the upcoming `v0.2.0` release, this architecture will be refactored:
-> - **Loading** will be split out into [`mlwp-data-loaders`](https://github.com/mlwp-tools/mlwp-data-loaders).
-> - **Validation** of loaded `xr.Dataset`s will be moved to [`mlwp-data-specs`](https://github.com/mlwp-tools/mlwp-data-specs) (which will contain the requirements for each of the dataset traits and the validation logic).
-> - **Execution** of the full verification pipeline (loading, transformations, alignment, and verification) from configuration files may be moved to a separate package in future releases.
-> - **Tests** will be added to `mxalign` (building on test datasets already integrated into `mlwp-data-loaders`) that ensure that all alignment operations work correctly (Testing notebook execution inside `mxalign` is explicitly excluded from the current roadmap).
+These traits are defined and validated by [`mlwp-data-specs`](https://github.com/mlwp-tools/mlwp-data-specs) and attached to datasets by [`mlwp-data-loaders`](https://github.com/mlwp-tools/mlwp-data-loaders). `mxalign` reads them to infer how datasets should be aligned, without needing to know how they were loaded.
+
+`mxalign` currently supports alignment in **space** and **time**. Alignment along the **uncertainty** axis (e.g. ensemble to deterministic) is planned for a future release.
 
 ## Python API
 
-`mxalign` provides building blocks for manual alignment, transformations, and interpolations of `xarray` datasets. This is ideal for interactive use in Jupyter notebooks or custom Python scripts.
+`mxalign` provides building blocks for spatial and temporal alignment of `xarray` datasets. This is ideal for interactive use in Jupyter notebooks or custom Python scripts.
 
 ```python
-import xarray as xr
-from mxalign import load, align_space, align_time, transform
+import mlwp_data_loaders as dl
+import mxalign as mx
 
-# Load datasets (using registered loaders)
-ds_obs = load(name="observations_loader", files=["obs.nc"])
-ds_fcst = load(name="anemoi_inference", files=["forecast.nc"])
+# Load datasets — traits are attached by the loader
+ds_obs = dl.load("observations_loader", files=["obs.nc"])
+ds_fcst = dl.load("anemoi_inference", files=["forecast.nc"])
 
 # Align the forecast spatially to match the observation reference
-ds_fcst_aligned_space = align_space(ds_fcst, reference=ds_obs, method="interpolation")
+ds_fcst_aligned = mx.align_space(ds_fcst, reference=ds_obs, method="interpolation")
 
 # Align datasets temporally
-datasets = {"obs": ds_obs, "fcst": ds_fcst_aligned_space}
-aligned_datasets = align_time(datasets, method="intersection")
+datasets = {"obs": ds_obs, "fcst": ds_fcst_aligned}
+aligned_datasets = mx.align_time(datasets, method="intersection")
 ```
 
 For a more comprehensive interactive example, check out the [introductory notebook](./examples/introduction.ipynb).
 
 ## Executing via a Configuration
 
-For full verification pipeline execution, `mxalign` uses a YAML configuration file. This allows you to declaratively define how datasets are loaded, transformed, aligned, and verified.
+`mxalign` can drive a full verification pipeline from a YAML configuration file, orchestrating dataset loading (via `mlwp-data-loaders`), transformations, alignment, and verification.
 
 ### Configuration Contents
 

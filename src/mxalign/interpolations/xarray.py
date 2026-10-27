@@ -1,6 +1,6 @@
 from .base import BaseInterpolator
 from .registry import register_interpolator
-from ..properties.properties import Space
+from mlwp_data_specs.specs.traits.spatial_coordinate import Space
 
 import xarray as xr
 
