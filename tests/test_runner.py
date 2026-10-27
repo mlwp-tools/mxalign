@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 
 from mxalign.pipeline.runner import Runner
 
@@ -19,10 +20,14 @@ def test_align_runs_time_alignment_without_time_section(ds_fcst, ds_obs):
     assert runner.datasets["obs"].mx.is_forecast()
 
 
-def test_align_time_rejects_unknown_options(ds_fcst, ds_obs):
-    runner = _runner({"fcst": ds_fcst, "obs": ds_obs}, {"reference": "obs"})
-    with pytest.raises(ValueError, match="Unknown option.*return_as"):
-        runner.align_time({"return_as": "forecast"}, reference_name="obs")
+def test_align_time_rejects_unknown_options():
+    with pytest.raises(ValidationError, match="alignment.time.return_as"):
+        Runner(
+            {
+                "datasets": {},
+                "alignment": {"reference": "obs", "time": {"return_as": "forecast"}},
+            }
+        )
 
 
 def test_transform_datasets_without_transformations_section(ds_obs):

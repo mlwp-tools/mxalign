@@ -43,7 +43,7 @@ For a more comprehensive interactive example, check out the [introductory notebo
 
 ### Configuration Contents
 
-The configuration file is divided into several main sections:
+The configuration file is divided into several main sections. It is validated on load against the schema in `mxalign.pipeline.config` (`PipelineConfig`): unknown sections or keys, and missing required ones such as `alignment.reference`, raise an error up front. Keys that are passed through to a function, such as loader, transformation, metric and save options, are accepted as-is.
 
 ```yaml
 datasets:

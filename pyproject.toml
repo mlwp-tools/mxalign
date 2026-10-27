@@ -23,6 +23,7 @@ dependencies = [
     "mlwp-data-specs",
     "mlwp-data-loaders",
     "pandas>=2.2",
+    "pydantic>=2",
 ]
 
 [project.scripts]

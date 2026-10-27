@@ -2,7 +2,7 @@ import datetime
 
 import pytest
 
-from mxalign.pipeline.config import Config
+from mxalign.pipeline.config import load_config
 from mxalign.pipeline.dates import Dates
 from mxalign.pipeline.save import DatasetPath
 
@@ -45,15 +45,16 @@ def test_substitute_lead_time_requires_whole_hours():
 
 def test_config_expands_files_from_dates_section():
     # YAML parses unquoted timestamps to datetime objects
-    config = Config(
+    config = load_config(
         {
             "dates": {**DATES, "start": datetime.datetime(2020, 1, 1)},
             "datasets": {
                 "fc": {"loader": "x", "files": "/d/{reference_time:%Y%m%d}.nc"}
             },
+            "alignment": {"reference": "fc"},
         }
     )
-    assert config["datasets"]["fc"]["files"] == [
+    assert config.datasets["fc"].files == [
         "/d/20200101.nc",
         "/d/20200102.nc",
         "/d/20200103.nc",
