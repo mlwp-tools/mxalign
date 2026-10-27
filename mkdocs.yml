@@ -1,0 +1,112 @@
+site_name: mxalign
+site_description: Align meteorological datasets in space and time with xarray.
+repo_url: https://github.com/mlwp-tools/mxalign
+repo_name: mlwp-tools/mxalign
+edit_uri: edit/main/doc/
+docs_dir: doc
+
+exclude_docs: |
+  adr/template.md
+
+not_in_nav: |
+  adr/ADR-002_mxalign-loader-interface.md
+
+validation:
+  anchors: warn
+  unrecognized_links: warn
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - content.code.annotate
+    - navigation.indexes
+    - navigation.sections
+    - navigation.footer
+    - navigation.top
+    - search.highlight
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: numpy
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: false
+            show_signature_annotations: true
+            separate_signature: true
+            members_order: source
+            heading_level: 2
+            merge_init_into_class: true
+            show_if_no_docstring: true
+            filters: ["!^_"]
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+  - Concepts:
+      - The mlwp-tools ecosystem: concepts/ecosystem.md
+      - Traits: concepts/traits.md
+      - How alignment works: concepts/alignment.md
+  - User guide:
+      - The ds.mx accessor: user-guide/accessor.md
+      - Temporal alignment: user-guide/time-alignment.md
+      - Spatial alignment: user-guide/space-alignment.md
+      - Interpolation methods: user-guide/interpolation.md
+      - Consistent missing data: user-guide/nans.md
+      - Transformations: user-guide/transformations.md
+      - Config-driven pipeline: user-guide/pipeline.md
+  - API reference:
+      - reference/index.md
+      - Alignment: reference/align.md
+      - ds.mx accessor: reference/accessor.md
+      - Interpolations: reference/interpolations.md
+      - Transformations: reference/transformations.md
+      - Runner: reference/runner.md
+  - Design decisions:
+      - "ADR-001: Separate loading and validation": adr/ADR-001_seperate-validation-and-loading.md

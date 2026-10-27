@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Added a documentation site in `doc/` (MkDocs Material + mkdocstrings, new `docs` dependency group): home, installation, a quickstart that runs on public sample data, concept pages (ecosystem, traits, how alignment works), a generated API reference, and placeholder user-guide pages. Build with `uv run --group docs mkdocs serve`. @michielv
 - **Breaking:** file path patterns (`datasets.<name>.files` with a `dates:` section, and `alignment.save.path`) now use Python `str.format` syntax instead of earthkit-data patterns: `{reference_time:%Y%m%d%H}` instead of `{reference_time:strftime(%Y%m%d%H)}`, `{year:02d}` instead of `{year:int(%02d)}`. `{lead_time}` (integer hours) and `{valid_time}` are now supported in `files` patterns. `earthkit-data` is no longer a dependency. @michielv
 - **Breaking:** temporal alignment always runs in the pipeline; `alignment.time` is optional and only accepts `lead_time` (`reference` | `intersection` | `union`, forecast reference only). Unknown keys such as `return_as` or `method` now raise an error. `align_time` takes `reference` and an explicit `lead_time` instead of `**kwargs`. @michielv
 - Remove dataset loading and dataset validation and outsource it to [mlwp-data-loaders](https://github.com/mlwp-tools/mlwp-data-loaders) and [mlwp-data-specs](https://github.com/mlwp-tools/mlwp-data-specs) @michielv

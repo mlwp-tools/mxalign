@@ -2,13 +2,13 @@
 
 **An xarray based package for alignment of meteorological datasets**
 
+📖 **Documentation:** see [`doc/`](./doc/index.md). Build it locally with `uv sync --group docs && uv run mkdocs serve`.
+
 ## What is this?
 
 `mxalign` is an `xarray`-based package for aligning meteorological datasets. It operates on datasets that carry **traits** — metadata attributes that describe the nature of a dataset along three axes:
-
-`mxalign` is an `xarray`-based package for aligning meteorological datasets. It operates on datasets that carry **traits** — metadata attributes that describe the nature of a dataset along three axes:
 - **Space:** `grid` or `point`
-- **Time:** `forecast`, `observation`, or `climatology`
+- **Time:** `forecast` or `observation`
 - **Uncertainty:** `deterministic`, `ensemble`, or `quantile`
 
 These traits are defined and validated by [`mlwp-data-specs`](https://github.com/mlwp-tools/mlwp-data-specs) and attached to datasets by [`mlwp-data-loaders`](https://github.com/mlwp-tools/mlwp-data-loaders). `mxalign` reads them to infer how datasets should be aligned, without needing to know how they were loaded.
@@ -20,19 +20,23 @@ These traits are defined and validated by [`mlwp-data-specs`](https://github.com
 `mxalign` provides building blocks for spatial and temporal alignment of `xarray` datasets. This is ideal for interactive use in Jupyter notebooks or custom Python scripts.
 
 ```python
-import mlwp_data_loaders as dl
+from mlwp_data_loaders import load_and_validate_dataset
 import mxalign as mx
 
 # Load datasets — traits are attached by the loader
-ds_obs = dl.load("observations_loader", files=["obs.nc"])
-ds_fcst = dl.load("anemoi_inference", files=["forecast.nc"])
+ds_fcst = load_and_validate_dataset(
+    "forecast.nc", loader="mlwp_data_loaders.loaders.anemoi.anemoi_inference"
+)
+ds_obs = load_and_validate_dataset("synop.nc", loader="./myloader.py")  # your own loader
 
-# Align the forecast spatially to match the observation reference
-ds_fcst_aligned = mx.align_space(ds_fcst, reference=ds_obs, method="interpolation")
+# Interpolate the gridded forecast to the stations (grid → point)
+fcst_pts = ds_fcst.mx.align_space_with(ds_obs, method="delaunay")
 
-# Align datasets temporally
-datasets = {"obs": ds_obs, "fcst": ds_fcst_aligned}
-aligned_datasets = mx.align_time(datasets, reference="obs")
+# Put the observations on the forecast's (reference_time, lead_time) layout
+obs_fc = ds_obs.mx.align_time_with(fcst_pts)
+
+# Or align several datasets to one reference at once
+aligned = mx.align_time({"fcst": fcst_pts, "obs": ds_obs}, reference="obs")
 ```
 
 For a more comprehensive interactive example, check out the [introductory notebook](./examples/introduction.ipynb).
@@ -49,10 +53,10 @@ The configuration file is divided into several main sections:
 datasets:
   # Define datasets to load, specifying the loader, files, and variables
   obs_data:
-    loader: observations_loader
+    loader: ./myloader.py            # a .py file defining load_dataset(paths, **kwargs)
     files: ["obs.nc"]
   fcst_data:
-    loader: anemoi_inference
+    loader: mlwp_data_loaders.loaders.anemoi.anemoi_inference
     files: ["forecast.nc"]
 
 transformations:
