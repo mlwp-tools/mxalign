@@ -9,6 +9,7 @@ and linear barycentric (Delaunay) interpolation reproduce it exactly.
 Trait / accessor-level tests live in test_align_space.py.
 """
 
+import logging
 from pathlib import Path
 
 import cartopy.crs as ccrs
@@ -252,6 +253,28 @@ class TestXarrayInterpolator:
         np.testing.assert_array_equal(result["station"].values, ["a", "b", "c"])
         np.testing.assert_allclose(result["temp"].values, [0.0, 1.0, 2.0])
 
+    def test_ensemble_values_per_member(
+        self, ds_grid_ens: xr.Dataset, target_points: xr.Dataset
+    ) -> None:
+        """Check that each member is interpolated on its own.
+
+        Parameters
+        ----------
+        ds_grid_ens : xr.Dataset
+            Stacked grid ensemble fixture, ``temp = 100 * member + lat + lon``.
+        target_points : xr.Dataset
+            Target point locations fixture.
+        """
+        source = ds_grid_ens.set_index(grid_index=["latitude", "longitude"]).unstack()
+
+        result = XarrayInterpolator(target_points)._interpolate(source)
+
+        members = ds_grid_ens["member"].values
+        np.testing.assert_allclose(
+            result["temp"].transpose("member", "point_index").values,
+            100.0 * members[:, np.newaxis] + np.array([0.0, 1.0, 2.0]),
+        )
+
 
 # ---------------------------------------------------------------------------
 # DelaunayInterpolator
@@ -431,6 +454,72 @@ class TestDelaunayInterpolator:
         result = DelaunayInterpolator(far_point)._interpolate(grid_stacked)
 
         assert np.isnan(result["temp"].isel(point_index=0).item())
+
+    @pytest.mark.parametrize("chunked", [False, True])
+    @pytest.mark.parametrize(
+        "dims", [("member", "grid_index"), ("grid_index", "member")]
+    )
+    def test_ensemble_keeps_dim_order(
+        self,
+        ds_grid_ens: xr.Dataset,
+        target_points: xr.Dataset,
+        dims: tuple[str, str],
+        chunked: bool,
+    ) -> None:
+        """Check that ``member`` is interpolated wherever it sits in the dims.
+
+        ``point_index`` takes the place of ``grid_index`` in the output, so a
+        ``member`` dimension after ``grid_index`` stays after ``point_index``.
+
+        Parameters
+        ----------
+        ds_grid_ens : xr.Dataset
+            Stacked grid ensemble fixture, ``temp = 100 * member + lat + lon``.
+        target_points : xr.Dataset
+            Target point locations fixture.
+        dims : tuple[str, str]
+            Dimension order of the source variable.
+        chunked : bool
+            Whether the source is dask-backed with several ``grid_index`` chunks.
+        """
+        source = ds_grid_ens.transpose(*dims)
+        if chunked:
+            source = source.chunk({"grid_index": 4, "member": 1})
+
+        result = DelaunayInterpolator(target_points)._interpolate(source)
+
+        out_dims = tuple("point_index" if d == "grid_index" else d for d in dims)
+        assert result["temp"].dims == out_dims
+        members = ds_grid_ens["member"].values
+        np.testing.assert_allclose(
+            result["temp"].transpose("member", "point_index").values,
+            100.0 * members[:, np.newaxis] + np.array([0.0, 1.0, 2.0]),
+        )
+
+    def test_variable_without_grid_index_is_skipped(
+        self,
+        grid_stacked: xr.Dataset,
+        target_points: xr.Dataset,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Check that a variable without ``grid_index`` is dropped with a warning.
+
+        Parameters
+        ----------
+        grid_stacked : xr.Dataset
+            Stacked grid fixture.
+        target_points : xr.Dataset
+            Target point locations fixture.
+        caplog : pytest.LogCaptureFixture
+            Captures the warning.
+        """
+        source = grid_stacked.assign(offset=("step", [1.0, 2.0]))
+
+        with caplog.at_level(logging.WARNING, logger=delaunay.__name__):
+            result = DelaunayInterpolator(target_points)._interpolate(source)
+
+        assert list(result.data_vars) == ["temp"]
+        assert any("'offset'" in r.getMessage() for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

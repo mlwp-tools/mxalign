@@ -63,7 +63,9 @@ class DelaunayInterpolator(BaseInterpolator):
     def _interpolate(self, source_dataset: xr.Dataset) -> xr.Dataset:
         """Interpolate a stacked grid dataset to the target points.
 
-        Variables whose last dimension is not ``grid_index`` are skipped.
+        Variables without a ``grid_index`` dimension are skipped. In the
+        output, ``point_index`` takes the place of ``grid_index`` and the other
+        dimensions keep their order.
 
         Parameters
         ----------
@@ -110,13 +112,18 @@ class DelaunayInterpolator(BaseInterpolator):
         arrays_out = {}
         for var in source_dataset.data_vars:
             da = source_dataset[var]
-            if da.dims[-1] != "grid_index":
-                print(
-                    f"Skipping variable '{var}' - doesn't end with spatial dimension grid_index"
+            if "grid_index" not in da.dims:
+                logger.warning(
+                    "Delaunay interpolation: skipping variable '%s' without a "
+                    "grid_index dimension.",
+                    var,
                 )
                 continue
-            else:
-                arrays_out[var] = interpolate_da(da, W, target_points)
+            # The weight matmul needs grid_index last; put point_index back in
+            # its place afterwards so e.g. a trailing member dim stays trailing
+            out_dims = [("point_index" if d == "grid_index" else d) for d in da.dims]
+            da = da.transpose(..., "grid_index")
+            arrays_out[var] = interpolate_da(da, W, target_points).transpose(*out_dims)
 
         ds_out = xr.Dataset(arrays_out).assign_coords(
             latitude=self.target_dataset["latitude"],
