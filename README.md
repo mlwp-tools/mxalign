@@ -32,7 +32,7 @@ ds_fcst_aligned = mx.align_space(ds_fcst, reference=ds_obs, method="interpolatio
 
 # Align datasets temporally
 datasets = {"obs": ds_obs, "fcst": ds_fcst_aligned}
-aligned_datasets = mx.align_time(datasets, method="intersection")
+aligned_datasets = mx.align_time(datasets, reference="obs")
 ```
 
 For a more comprehensive interactive example, check out the [introductory notebook](./examples/introduction.ipynb).
@@ -43,7 +43,7 @@ For a more comprehensive interactive example, check out the [introductory notebo
 
 ### Configuration Contents
 
-The configuration file is divided into several main sections:
+The configuration file is divided into several main sections. It is validated on load against the schema in `mxalign.pipeline.config` (`PipelineConfig`): unknown sections or keys, and missing required ones such as `alignment.reference`, raise an error up front. Keys that are passed through to a function, such as loader, transformation, metric and save options, are accepted as-is.
 
 ```yaml
 datasets:
@@ -61,8 +61,9 @@ transformations:
 alignment:
   # Define reference dataset and alignment methods (space, time, NaN broadcasting)
   reference: obs_data
-  time:
-    method: intersection
+  # Time alignment always runs; options only apply to a forecast reference
+  # time:
+  #   lead_time: union  # reference (default) | intersection | union
 
 verification:
   # Specify the reference dataset and the metrics to calculate
@@ -92,7 +93,7 @@ mxalign slurm path/to/config.yaml --account your_account --queue your_queue --co
 You can also execute the entire configuration-driven pipeline directly from Python using the `Runner` class.
 
 ```python
-from mxalign.runner import Runner
+from mxalign.pipeline.runner import Runner
 
 # Initialize the runner with a YAML config file or a dictionary
 runner = Runner("path/to/config.yaml")
