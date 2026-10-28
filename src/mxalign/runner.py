@@ -1,8 +1,8 @@
 import os
 import xarray as xr
+from mlwp_data_loaders import load_and_validate_dataset
 
 from .utils.config import Config
-from .loaders.loader import load
 from .transformations.transform import transform
 from .align.time import align_time
 from .align.space import align_space
@@ -42,13 +42,12 @@ class Runner:
                     files.append(file)
                 else:
                     print(f"File: {file} is missing, skipping.")
-            self.datasets[name] = load(
-                name=loader,
-                files=files,
-                variables=variables,
-                grid_mapping=grid_mapping,
-                **config_ds,
-            )
+            if variables is not None:
+                config_ds["variables"] = variables
+            ds = load_and_validate_dataset(files, loader=loader, **config_ds)
+            if grid_mapping is not None:
+                ds = ds.mx.add_grid_mapping(grid_mapping)
+            self.datasets[name] = ds
 
     def transform_datasets(self):
         config = self.config["transformations"]
