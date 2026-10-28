@@ -24,7 +24,7 @@ import mlwp_data_loaders as dl
 import mxalign as mx
 
 # Load datasets — traits are attached by the loader.
-# The `harp.obstable` loader reads SQLite obstables (netCDF observation
+# The `harp.obstable` loader reads SQLite observation databases (netCDF observation
 # files are no longer supported by a built-in loader).
 ds_obs = dl.load_and_validate_dataset(
     ["obs.sqlite"], loader="mlwp_data_loaders.loaders.harp.obstable"
