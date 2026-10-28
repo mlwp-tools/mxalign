@@ -9,10 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Remove dataset loading and dataset validation and outsource it to [mlwp-data-loaders](https://github.com/mlwp-tools/mlwp-data-loaders) and [mlwp-data-specs](https://github.com/mlwp-tools/mlwp-data-specs) @michielv
+  The optional `ifs` extra is removed; GRIB/IFS dependencies are now handled by `mlwp-data-loaders`.
   **Migration:** `mxalign.loaders` is gone. In YAML configs, `loader:` is now a dotted module path from `mlwp_data_loaders` (e.g. `mlwp_data_loaders.loaders.anemoi.anemoi_inference`, `...anemoi.anemoi_datasets`, `...harp.obstable`, `...ifs.forecast`) or a path to a local `.py` file defining `load_dataset(paths, **kwargs)`. In Python, use `mlwp_data_loaders.load_and_validate_dataset(paths, loader=...)`. The `grid_mapping:` key is still applied by `Runner` after loading.
 - Store dataset properties as netCDF-safe individual attributes while keeping read compatibility with legacy `attrs["properties"]` dict/JSON data. [\#21](https://github.com/mlwp-tools/mxalign/pull/21) @observingClouds
 - Added CI test workflow with first unit tests. [\#21](https://github.com/mlwp-tools/mxalign/pull/21) @observingClouds
-- Added optional `ifs` dependency group with `cfgrib`, `eccodes`, and `eccodeslib`. [\#21](https://github.com/mlwp-tools/mxalign/pull/21) @observingClouds
 - Added CI action for package build and upload to pypi.org on releases. [\#28](https://github.com/mlwp-tools/mxalign/pull/28) @leifdenby
 
 ## [0.1.0](https://github.com/mlwp-tools/mxalign/releases/tag/v0.1.0)
