@@ -1,3 +1,5 @@
+from importlib.metadata import version
+
 from .transformations.transform import transform
 from .transformations.registry import available_transformations, register_transformation
 from .interpolations.interpolate import interpolate
@@ -10,6 +12,7 @@ from . import transformations
 from . import interpolations
 
 __all__ = [
+    "__version__",
     "transform",
     "available_transformations",
     "register_transformation",
@@ -22,3 +25,4 @@ __all__ = [
     "transformations",
     "interpolations",
 ]
+__version__ = version("mxalign")
