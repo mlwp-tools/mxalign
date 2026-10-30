@@ -75,3 +75,20 @@ def transform(ds, variables, min=None, max=None, datasets=None):
                 mask = mask & (ds[var] <= max)
             ds[var] = ds[var].where(mask)
     return ds
+
+@register_transformation("clip")
+def transform(ds, variables, min=None, max=None):
+    """Censor values to [min, max] (replace, don't mask; NaNs stay NaN).
+
+    Typical use case: de-accumulated precipitation carries small negative
+    round-off values (HARMONIE tp, ~ -0.005 mm/6h). Masking them with
+    valid_range drops individual ensemble members at that point (always the
+    dry ones), which biases ensemble mean and spread; clipping at min=0 is
+    the standard treatment (cf. MET censor_thresh/censor_val).
+    """
+    if isinstance(variables, str):
+        variables = [variables]
+    for var in variables:
+        if var in ds:
+            ds[var] = ds[var].clip(min=min, max=max)
+    return ds
