@@ -14,7 +14,12 @@ import traceback
 import numpy as np
 import xarray as xr
 
-from mxalign.metrics import murphy_decomposition, murphy_decomposition_domain_mean
+from mxalign.metrics import (
+    murphy_decomposition,
+    murphy_decomposition_domain_mean,
+    murphy_decomposition_ECMWF,
+    murphy_decomposition_ECMWF_domain_mean,
+)
 
 RTOL = 1e-12
 ATOL = 1e-12
@@ -358,6 +363,311 @@ def test_domain_mean_rejects_ensemble_input():
 
     try:
         murphy_decomposition_domain_mean(ds_o, ds_f, dim=("reference_time", "grid_index"))
+    except ValueError as exc:
+        assert "member" in str(exc)
+        return
+    raise AssertionError("expected ValueError for ensemble forecast input")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# murphy_decomposition_ECMWF -- the Murphy (1988) skill-score split:
+#     MSE = (f̄-ō)² + σ_o²(1-r²) + σ_o²(σ_f/σ_o - r)²
+#            bias      decorr        condbias
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _forecast_with_slope_and_noise(obs, slope, noise_var_factor, seed):
+    """``f = ō + slope·(o - ō) + e``, e ⊥ (o - ō) with ``var(e) = noise_var_factor·var_o``.
+
+    Orthogonalising the noise against the observed anomaly (rather than drawing
+    it independently and hoping) makes σ_f, r and every decomposition term below
+    exact in floating point rather than exact only in expectation: a 500-sample
+    independent draw still leaves ``cov(e, o-ō)`` of order 1e-2, which is many
+    orders of magnitude too large for the tolerances these tests assert.
+
+    Exactly, by construction::
+
+        σ_f² = (slope² + noise_var_factor)·σ_o²
+        r    = slope·σ_o / σ_f
+    """
+    rng = np.random.default_rng(seed)
+    oa = obs - obs.mean(axis=0, keepdims=True)
+    e = rng.normal(0.0, 1.0, size=obs.shape)
+    e = e - e.mean(axis=0, keepdims=True)
+    # Gram-Schmidt: remove the component of e along oa, per station.
+    e = e - (e * oa).sum(axis=0, keepdims=True) / (oa * oa).sum(axis=0, keepdims=True) * oa
+    scale = np.sqrt(noise_var_factor * (oa ** 2).mean(axis=0, keepdims=True)
+                    / (e ** 2).mean(axis=0, keepdims=True))
+    return obs.mean(axis=0, keepdims=True) + slope * oa + scale * e
+
+
+def _optimally_calibrated_forecast(obs, a, seed):
+    """Build f with σ_f/σ_o == r exactly, i.e. condbias == 0 by construction.
+
+    Taking ``slope = a`` and ``var(e) = a(1-a)·var_o`` gives ``σ_f² = a·σ_o²``,
+    so ``ratio = √a`` and ``r = a·σ_o²/(σ_f·σ_o) = √a`` — the forecast is damped
+    by *exactly* the amount its own correlation justifies.
+
+    This is the case the two decompositions disagree about: ``condbias`` is 0
+    (nothing to fix by rescaling) while the classic ``spread = (σ_f - σ_o)²``
+    is large and positive.
+    """
+    return _forecast_with_slope_and_noise(obs, a, a * (1.0 - a), seed)
+
+
+def test_ECMWF_perfect_forecast_is_all_zero():
+    """f == o exactly -> bias, decorr, condbias, ratio_excess all 0."""
+    rng = np.random.default_rng(20)
+    obs = rng.normal(280.0, 5.0, size=(12, 3))
+    ds_o, ds_f = _make_ds(obs, obs.copy())
+
+    res = murphy_decomposition_ECMWF(ds_o, ds_f, dim="reference_time")
+
+    for term in ("bias", "decorr", "condbias", "mse"):
+        np.testing.assert_allclose(_stat(res, term), 0.0, rtol=RTOL, atol=1e-10)
+    np.testing.assert_allclose(_stat(res, "r"), 1.0, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(_stat(res, "ratio"), 1.0, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(_stat(res, "ratio_excess"), 0.0, rtol=RTOL, atol=1e-10)
+    np.testing.assert_array_equal(_stat(res, "N"), np.full(3, 12.0))
+
+
+def test_ECMWF_constant_offset_is_pure_bias():
+    """f == o + c -> bias == c^2, decorr == condbias == 0."""
+    rng = np.random.default_rng(21)
+    obs = rng.normal(280.0, 5.0, size=(12, 3))
+    offsets = np.array([2.0, -3.0, 0.5])
+    ds_o, ds_f = _make_ds(obs, obs + offsets[None, :])
+
+    res = murphy_decomposition_ECMWF(ds_o, ds_f, dim="reference_time")
+
+    np.testing.assert_allclose(_stat(res, "bias"), offsets ** 2, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(_stat(res, "decorr"), 0.0, rtol=RTOL, atol=1e-10)
+    np.testing.assert_allclose(_stat(res, "condbias"), 0.0, rtol=RTOL, atol=1e-10)
+    np.testing.assert_allclose(_stat(res, "mse"), offsets ** 2, rtol=1e-10, atol=1e-10)
+
+
+def test_ECMWF_optimally_damped_forecast_has_zero_condbias():
+    """THE point of this decomposition, vs the classic bias/spread/corr split.
+
+    A forecast damped to exactly ``σ_f = r·σ_o`` is optimally calibrated in
+    amplitude: no linear rescaling can improve its MSE.  ``condbias`` sees that
+    and reports 0.  The classic ``spread = (σ_f - σ_o)²`` cannot -- it is
+    minimised at ratio == 1 regardless of r, so it charges this forecast a
+    large penalty for damping that is in fact correct.
+
+    Both splits must still recompose to the *same* MSE, which is asserted too.
+    """
+    rng = np.random.default_rng(22)
+    obs = rng.normal(280.0, 5.0, size=(400, 3))
+    a = 0.36                                   # -> ratio == r == 0.6
+    fct = _optimally_calibrated_forecast(obs, a, seed=23)
+    ds_o, ds_f = _make_ds(obs, fct)
+
+    res = murphy_decomposition_ECMWF(ds_o, ds_f, dim="reference_time")
+    var_o = obs.var(axis=0)                    # ddof=0, matching the metric
+
+    np.testing.assert_allclose(_stat(res, "ratio"), np.sqrt(a), rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(_stat(res, "r"), np.sqrt(a), rtol=1e-10, atol=1e-10)
+    # Optimally calibrated amplitude -> both calibration diagnostics vanish.
+    np.testing.assert_allclose(_stat(res, "ratio_excess"), 0.0, rtol=RTOL, atol=1e-10)
+    np.testing.assert_allclose(_stat(res, "condbias"), 0.0, rtol=RTOL, atol=1e-9)
+    # All the error is irreducible-given-r: decorr == σ_o²(1 - r²) == (1-a)σ_o²
+    np.testing.assert_allclose(_stat(res, "decorr"), (1.0 - a) * var_o,
+                               rtol=1e-9, atol=1e-9)
+    np.testing.assert_allclose(_stat(res, "bias"), 0.0, rtol=RTOL, atol=1e-9)
+
+    # The classic split charges a large `spread` for the very same forecast.
+    res_old = murphy_decomposition(ds_o, ds_f, dim="reference_time")
+    expected_spread = (np.sqrt(a) - 1.0) ** 2 * var_o
+    np.testing.assert_allclose(_stat(res_old, "spread"), expected_spread,
+                               rtol=1e-9, atol=1e-9)
+    assert np.all(_stat(res_old, "spread") > 1.0), "the contrast this test exists for"
+
+    # Same MSE either way -- the two are re-partitions of one number.
+    np.testing.assert_allclose(_stat(res, "mse"), _stat(res_old, "mse"),
+                               rtol=1e-12, atol=1e-12)
+
+
+def test_ECMWF_undamped_forecast_carries_positive_condbias():
+    """The mirror image of the test above: ratio == 1 exactly, but r < 1.
+
+    The classic ``spread = (σ_f - σ_o)²`` is exactly 0 here, so that split
+    reports perfect variance calibration.  The ECMWF split disagrees, and is
+    right: at r == 0.7 the MSE-optimal amplitude is 0.7·σ_o, so a forecast at
+    full amplitude is *over*-dispersed and pays condbias == σ_o²(1 - r)².
+
+    Together with test_ECMWF_optimally_damped_forecast_has_zero_condbias this
+    pins the disagreement in both directions: `spread` and `condbias` are
+    minimised at different, genuinely incompatible places.
+    """
+    rng = np.random.default_rng(32)
+    obs = rng.normal(280.0, 5.0, size=(200, 3))
+    c = 0.7                                    # -> ratio == 1, r == c
+    fct = _forecast_with_slope_and_noise(obs, c, 1.0 - c ** 2, seed=33)
+    ds_o, ds_f = _make_ds(obs, fct)
+
+    res = murphy_decomposition_ECMWF(ds_o, ds_f, dim="reference_time")
+    var_o = obs.var(axis=0)                    # ddof=0, matching the metric
+
+    np.testing.assert_allclose(_stat(res, "ratio"), 1.0, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(_stat(res, "r"), c, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(_stat(res, "ratio_excess"), 1.0 - c, rtol=1e-9, atol=1e-9)
+    np.testing.assert_allclose(_stat(res, "condbias"), (1.0 - c) ** 2 * var_o,
+                               rtol=1e-9, atol=1e-9)
+    assert np.all(_stat(res, "condbias") > 1.0), "the penalty this test exists for"
+
+    # The classic split charges exactly nothing for the same over-dispersion.
+    res_old = murphy_decomposition(ds_o, ds_f, dim="reference_time")
+    np.testing.assert_allclose(_stat(res_old, "spread"), 0.0, rtol=RTOL, atol=1e-9)
+    np.testing.assert_allclose(_stat(res, "mse"), _stat(res_old, "mse"),
+                               rtol=1e-12, atol=1e-12)
+
+
+def test_ECMWF_condbias_equals_sigma_o_sq_times_ratio_excess_sq():
+    """The documented relationship condbias == σ_o²·(ratio - r)², on real-ish data."""
+    rng = np.random.default_rng(25)
+    obs = rng.normal(280.0, 5.0, size=(40, 6))
+    fct = 279.0 + 0.7 * obs + rng.normal(0.0, 1.5, size=(40, 6))
+    ds_o, ds_f = _make_ds(obs, fct)
+
+    res = murphy_decomposition_ECMWF(ds_o, ds_f, dim="reference_time")
+
+    expected = _stat(res, "sigma_o") ** 2 * _stat(res, "ratio_excess") ** 2
+    np.testing.assert_allclose(_stat(res, "condbias"), expected, rtol=1e-9, atol=1e-12)
+
+
+def test_ECMWF_is_an_exact_repartition_of_the_classic_split():
+    """bias and mse identical to murphy_decomposition; decorr+condbias == spread+corr."""
+    rng = np.random.default_rng(26)
+    obs = rng.normal(280.0, 5.0, size=(30, 8))
+    fct = 0.8 * obs + 56.0 + rng.normal(0.0, 2.0, size=(30, 8))
+    ds_o, ds_f = _make_ds(obs, fct)
+
+    new = murphy_decomposition_ECMWF(ds_o, ds_f, dim="reference_time")
+    old = murphy_decomposition(ds_o, ds_f, dim="reference_time")
+
+    # Shared terms are computed from the same moments -> must agree tightly.
+    for shared in ("N", "f_mean", "o_mean", "sigma_f", "sigma_o", "r", "bias", "ratio", "mse"):
+        np.testing.assert_allclose(_stat(new, shared), _stat(old, shared),
+                                   rtol=1e-12, atol=1e-12,
+                                   err_msg=f"shared stat '{shared}' drifted between splits")
+    # The two remaining terms partition the same residual differently.
+    np.testing.assert_allclose(
+        _stat(new, "decorr") + _stat(new, "condbias"),
+        _stat(old, "spread") + _stat(old, "corr"),
+        rtol=1e-10, atol=1e-10)
+    # ...and genuinely differently -- otherwise this adds nothing.
+    assert np.all(np.abs(_stat(new, "decorr") - _stat(old, "corr")) > 1e-3)
+
+
+def test_ECMWF_identity_holds_including_degenerate_constant_series():
+    """bias+decorr+condbias == MSE even where sigma == 0 and r is NaN.
+
+    Covers both degenerate directions, since `decorr`/`condbias` are formed
+    from cov/sigma_f (unlike the classic split's `corr`, which divides by
+    nothing): station 1 has a constant FORECAST against varying obs -- the
+    case the ``fillna(0.0)`` limit in ``_murphy_ecmwf_stats`` exists for --
+    and station 2 has both series constant.
+    """
+    rng = np.random.default_rng(27)
+    obs = rng.normal(280.0, 5.0, size=(10, 3))
+    fct = obs + rng.normal(0.0, 2.0, size=(10, 3))
+    fct[:, 1] = 281.0            # constant forecast, varying obs -> sigma_f == 0
+    obs[:, 2] = 275.0            # both constant -> sigma_f == sigma_o == 0
+    fct[:, 2] = 277.0
+    ds_o, ds_f = _make_ds(obs, fct)
+
+    res = murphy_decomposition_ECMWF(ds_o, ds_f, dim="reference_time")
+
+    recomposed = _stat(res, "bias") + _stat(res, "decorr") + _stat(res, "condbias")
+    np.testing.assert_allclose(recomposed, _stat(res, "mse"), rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(_stat(res, "identity_residual"), 0.0, rtol=RTOL, atol=1e-9)
+
+    # Constant forecast: r undefined, but all obs variance lands in decorr and
+    # condbias vanishes -- the documented limit, not a NaN leak.
+    assert np.isnan(_stat(res, "r")[1])
+    np.testing.assert_allclose(_stat(res, "decorr")[1], obs[:, 1].var(),
+                               rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(_stat(res, "condbias")[1], 0.0, rtol=RTOL, atol=1e-10)
+
+    # Both constant: pure bias, and every other term exactly 0.
+    assert np.isnan(_stat(res, "r")[2])
+    np.testing.assert_allclose(_stat(res, "bias")[2], 4.0, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(_stat(res, "mse")[2], 4.0, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(_stat(res, "decorr")[2], 0.0, rtol=RTOL, atol=1e-10)
+    np.testing.assert_allclose(_stat(res, "condbias")[2], 0.0, rtol=RTOL, atol=1e-10)
+
+
+def test_ECMWF_rejects_ensemble_input():
+    """Same deterministic-only guard as murphy_decomposition."""
+    rng = np.random.default_rng(28)
+    obs = rng.normal(280.0, 5.0, size=(6, 3))
+    ds_o, ds_f = _make_ds(obs, obs.copy())
+    ds_f = ds_f.expand_dims(member=[0, 1])
+
+    try:
+        murphy_decomposition_ECMWF(ds_o, ds_f, dim="reference_time")
+    except ValueError as exc:
+        assert "member" in str(exc)
+        return
+    raise AssertionError("expected ValueError for ensemble forecast input")
+
+
+def test_ECMWF_rejects_spatial_dim_in_reduce_dims():
+    """Pooling stations would defeat the per-station design -- same guard."""
+    rng = np.random.default_rng(29)
+    obs = rng.normal(280.0, 5.0, size=(6, 3))
+    ds_o, ds_f = _make_ds(obs, obs.copy())
+
+    try:
+        murphy_decomposition_ECMWF(ds_o, ds_f, dim=["reference_time", "point_index"])
+    except ValueError as exc:
+        assert "point_index" in str(exc)
+        return
+    raise AssertionError("expected ValueError for spatial dim in `dim`")
+
+
+def test_ECMWF_domain_mean_identity_holds_on_grid_pooling():
+    """bias+decorr+condbias == MSE when pooling reference_time AND grid_index.
+
+    Uses the function's default ``dim`` so this also pins the default to
+    ``("reference_time", "grid_index")`` -- the shape the
+    *_murphyECMWF_vs_ha_analysis.sh scripts rely on.
+    """
+    rng = np.random.default_rng(30)
+    obs = rng.normal(280.0, 5.0, size=(15, 50))
+    fct = obs + rng.normal(0.0, 2.0, size=(15, 50))
+    ds_o, ds_f = _make_grid_ds(obs, fct)
+
+    res = murphy_decomposition_ECMWF_domain_mean(ds_o, ds_f)
+
+    recomposed = (_stat_grid(res, "bias") + _stat_grid(res, "decorr")
+                  + _stat_grid(res, "condbias"))
+    np.testing.assert_allclose(recomposed, _stat_grid(res, "mse"), rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(_stat_grid(res, "identity_residual"), 0.0, rtol=RTOL, atol=1e-9)
+    np.testing.assert_allclose(_stat_grid(res, "N"), 15.0 * 50.0)
+    assert "grid_index" not in res.dims
+    assert "point_index" not in res.dims
+
+    # Same MSE as the classic domain-mean split, different partition of it.
+    old = murphy_decomposition_domain_mean(ds_o, ds_f)
+    np.testing.assert_allclose(_stat_grid(res, "mse"), _stat_grid(old, "mse"),
+                               rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        _stat_grid(res, "decorr") + _stat_grid(res, "condbias"),
+        _stat_grid(old, "spread") + _stat_grid(old, "corr"),
+        rtol=1e-10, atol=1e-10)
+
+
+def test_ECMWF_domain_mean_rejects_ensemble_input():
+    """Same deterministic-only guard as every other function in this family."""
+    rng = np.random.default_rng(31)
+    obs = rng.normal(280.0, 5.0, size=(6, 4))
+    ds_o, ds_f = _make_grid_ds(obs, obs.copy())
+    ds_f = ds_f.expand_dims(member=[0, 1])
+
+    try:
+        murphy_decomposition_ECMWF_domain_mean(ds_o, ds_f, dim=("reference_time", "grid_index"))
     except ValueError as exc:
         assert "member" in str(exc)
         return

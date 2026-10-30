@@ -760,6 +760,17 @@ _MURPHY_STATS = [
     "bias", "spread", "corr", "ratio", "mse", "identity_residual",
 ]
 
+#: Stats of the ECMWF/Murphy-1988 skill-score split (see
+#: ``murphy_decomposition_ECMWF``).  Shares the first six diagnostic stats and
+#: ``bias``/``ratio``/``mse``/``identity_residual`` with ``_MURPHY_STATS``, but
+#: replaces ``spread``/``corr`` with ``decorr``/``condbias`` and adds the
+#: signed calibration diagnostic ``ratio_excess``.
+_MURPHY_ECMWF_STATS = [
+    "N", "f_mean", "o_mean", "sigma_f", "sigma_o", "r",
+    "bias", "decorr", "condbias", "ratio", "ratio_excess", "mse",
+    "identity_residual",
+]
+
 #: Station-metadata coordinates carried through from the observation dataset.
 _STATION_COORDS = ("code", "latitude", "longitude", "altitude")
 
@@ -973,8 +984,16 @@ def murphy_decomposition(observations, forecasts, dim="reference_time",
     return result
 
 
-def _check_murphy_identity(result, rtol=1e-6, atol=1e-8):
-    """Raise if bias + spread + corr departs from MSE beyond tolerance."""
+def _check_murphy_identity(result, rtol=1e-6, atol=1e-8,
+                           label="murphy_decomposition",
+                           terms="bias+spread+corr"):
+    """Raise if the decomposition terms depart from MSE beyond tolerance.
+
+    Reads only the ``identity_residual`` and ``mse`` stats, both of which every
+    Murphy-family function stores, so this helper is agnostic to *which*
+    three-way split produced them; ``label``/``terms`` only shape the error
+    message (default: the classic bias/spread/corr split).
+    """
     for var in result.data_vars:
         da  = result[var]
         res = da.sel(stat="identity_residual").values
@@ -987,9 +1006,9 @@ def _check_murphy_identity(result, rtol=1e-6, atol=1e-8):
         if bad.any():
             worst = np.abs(res[finite])[bad].max()
             raise ValueError(
-                f"murphy_decomposition: MSE identity violated for '{var}' at "
+                f"{label}: MSE identity violated for '{var}' at "
                 f"{int(bad.sum())}/{int(finite.sum())} (station, lead_time) points; "
-                f"max |bias+spread+corr-MSE| = {worst:.3e}. This indicates a bug in "
+                f"max |{terms}-MSE| = {worst:.3e}. This indicates a bug in "
                 f"the decomposition, not a data problem."
             )
 
@@ -1183,7 +1202,315 @@ def murphy_decomposition_domain_mean(observations, forecasts,
     # there is no per-cell/per-station coordinate to reattach here.
 
     if check_identity:
-        _check_murphy_identity(result, rtol=identity_rtol, atol=identity_atol)
+        _check_murphy_identity(result, rtol=identity_rtol, atol=identity_atol,
+                               label="murphy_decomposition_domain_mean")
+
+    return result
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ECMWF / Murphy-1988 skill-score decomposition
+# ──────────────────────────────────────────────────────────────────────────────
+
+_ECMWF_IDENTITY_TERMS = "bias+decorr+condbias"
+
+
+def _murphy_ecmwf_stats(obs_v, fct_v, dim_list, var=None, valid_range=None):
+    """Shared moment/term computation for the two ``*_ECMWF`` functions.
+
+    Masking, float64 promotion, the joint valid-pair rule and the ddof=0
+    population moments are identical to ``murphy_decomposition`` — only the
+    three-way split of ``MSE - bias`` differs.  Factored out because the two
+    ECMWF variants differ solely in which dimensions are pooled; the older
+    bias/spread/corr pair predates this helper and is deliberately left
+    untouched.
+
+    Returns the full ``_MURPHY_ECMWF_STATS`` dict for one variable.
+    """
+    # Mask unphysical fill values (e.g. 9.96921e+36 from zarr/netCDF)
+    obs_v = obs_v.where(np.abs(obs_v) < 1e10)
+    fct_v = fct_v.where(np.abs(fct_v) < 1e10)
+
+    if valid_range and var in valid_range:
+        vmin, vmax = valid_range[var]
+        obs_v = obs_v.where((obs_v >= vmin) & (obs_v <= vmax))
+        fct_v = fct_v.where((fct_v >= vmin) & (fct_v <= vmax))
+
+    # Joint mask: a pair counts only if BOTH sides are valid, so every moment
+    # below is computed over the identical sample.
+    valid = obs_v.notnull() & fct_v.notnull()
+    obs_v = obs_v.where(valid)
+    fct_v = fct_v.where(valid)
+
+    # float64 before accumulating moments -- same rationale as
+    # murphy_decomposition (differencing large, similar numbers).
+    obs_v = obs_v.astype("float64")
+    fct_v = fct_v.astype("float64")
+
+    n = valid.sum(dim=dim_list)
+
+    f_mean = fct_v.mean(dim=dim_list, skipna=True)
+    o_mean = obs_v.mean(dim=dim_list, skipna=True)
+
+    fa = fct_v - f_mean
+    oa = obs_v - o_mean
+
+    # skipna means each of these divides by the same count n -> ddof=0
+    var_f = (fa ** 2).mean(dim=dim_list, skipna=True)
+    var_o = (oa ** 2).mean(dim=dim_list, skipna=True)
+    cov   = (fa * oa).mean(dim=dim_list, skipna=True)
+
+    sigma_f = np.sqrt(var_f)
+    sigma_o = np.sqrt(var_o)
+
+    mse  = ((fct_v - obs_v) ** 2).mean(dim=dim_list, skipna=True)
+    bias = (f_mean - o_mean) ** 2
+
+    # r*sigma_o is evaluated as cov/sigma_f rather than as
+    # (cov/(sigma_f*sigma_o))*sigma_o so that no 0/0 arises when a series is
+    # constant, and so the two terms below need only one division between
+    # them.  Same spirit as murphy_decomposition's `corr = 2*(sigma_f*sigma_o
+    # - cov)` trick.  Substituting 0 where sigma_f == 0 is the correct limit:
+    # a constant forecast explains none of the observed variance, so all of it
+    # lands in `decorr` and `condbias` vanishes -- and the identity still
+    # closes, because cov is 0 there too.
+    r_sigma_o = (cov / sigma_f.where(sigma_f > 0)).fillna(0.0)
+
+    decorr   = var_o - r_sigma_o ** 2        # == sigma_o^2 * (1 - r^2)
+    condbias = (sigma_f - r_sigma_o) ** 2    # == sigma_o^2 * (sigma_f/sigma_o - r)^2
+
+    denom = sigma_f * sigma_o
+    r     = cov / denom.where(denom > 0)
+    ratio = sigma_f / sigma_o.where(sigma_o > 0)
+
+    residual = bias + decorr + condbias - mse
+
+    stats = {
+        "N": n.astype("float64"), "f_mean": f_mean, "o_mean": o_mean,
+        "sigma_f": sigma_f, "sigma_o": sigma_o, "r": r,
+        "bias": bias, "decorr": decorr, "condbias": condbias,
+        "ratio": ratio, "ratio_excess": ratio - r, "mse": mse,
+        "identity_residual": residual,
+    }
+    assert list(stats) == _MURPHY_ECMWF_STATS, "stat ordering drifted from _MURPHY_ECMWF_STATS"
+    return stats
+
+
+def murphy_decomposition_ECMWF(observations, forecasts, dim="reference_time",
+                               valid_range=None, member_dim="member",
+                               check_identity=True, identity_rtol=1e-6,
+                               identity_atol=1e-8):
+    """Per-station Murphy (1988) skill-score decomposition of MSE.
+
+    The *second* MSE split in this module.  For each station ``j``
+    independently, using only that station's valid (forecast, observation)
+    pairs::
+
+        bias_j     = (f̄_j - ō_j)²
+        decorr_j   = σ_o,j²·(1 - r_j²)
+        condbias_j = σ_o,j²·(σ_f,j/σ_o,j - r_j)²
+        MSE_j      = bias_j + decorr_j + condbias_j       (exact identity)
+
+    Same MSE, same moments, different three-way split from
+    ``murphy_decomposition`` — both are exact re-partitions of
+    ``MSE = (f̄-ō)² + σ_f² + σ_o² - 2·r·σ_f·σ_o``, so ``bias`` and ``mse`` are
+    bit-comparable between the two and only the remaining two terms differ::
+
+        murphy_decomposition   :  spread   = (σ_f - σ_o)²
+                                  corr     = 2·σ_f·σ_o·(1 - r)
+        murphy_decomposition_ECMWF: decorr   = σ_o²(1 - r²)
+                                    condbias = σ_o²(σ_f/σ_o - r)²
+
+    Why this split answers the smoothing question more directly
+    -----------------------------------------------------------
+    ``decorr`` is the **irreducible** error given the phase/timing agreement:
+    the MSE floor that would remain after optimally rescaling the forecast by
+    linear regression.  No amount of variance tuning can reduce it.
+
+    ``condbias`` is the **conditional bias** (Murphy's "slope reliability"):
+    it is exactly ``σ_o²`` times the squared distance of the amplitude ratio
+    ``σ_f/σ_o`` from its *optimal* value ``r``, and vanishes iff
+    ``σ_f = r·σ_o``.  This reframes the raw ``ratio < 1`` diagnostic: a
+    well-calibrated forecast with ``r = 0.8`` *should* be damped to
+    ``ratio ≈ 0.8``, and a forecast at ``ratio = 1`` is then over-dispersed
+    and carries a ``σ_o²(1-r)²`` penalty.  ``condbias`` therefore separates
+    "smoothed by the right amount for its own predictability" from
+    "over- or under-smoothed", which ``spread = (σ_f - σ_o)²`` cannot: that
+    term is minimised at ``ratio = 1`` regardless of ``r``.
+
+    The signed, scale-free version of the same diagnostic is reported as
+    ``ratio_excess = σ_f/σ_o - r`` (``condbias = σ_o²·ratio_excess²``):
+    negative means over-smoothed relative to optimal, positive means
+    over-dispersed, zero means optimally calibrated amplitude.  Unlike
+    ``condbias`` it is comparable across variables and stations with different
+    ``σ_o``.
+
+    **Deterministic forecasts only**, per-station-by-design, aggregation left
+    to ``code/aggregate_murphy_results.py`` — all exactly as
+    ``murphy_decomposition``; see that function's docstring for the rationale
+    behind each (it applies unchanged here).
+
+    Parameters
+    ----------
+    observations, forecasts, dim, valid_range, member_dim, check_identity,
+    identity_rtol, identity_atol
+        Identical in meaning to ``murphy_decomposition``.  ``dim`` must not
+        include the spatial dimension, for the same station-density reason.
+
+    Returns
+    -------
+    xr.Dataset
+        One variable per input variable with a ``stat`` dimension taking the
+        values ``N, f_mean, o_mean, sigma_f, sigma_o, r, bias, decorr,
+        condbias, ratio, ratio_excess, mse, identity_residual``, retaining
+        ``lead_time`` and ``point_index``, with station metadata preserved as
+        point_index coordinates.
+
+    Notes
+    -----
+    ddof=0 population moments, float64 promotion and the joint valid-pair mask
+    are required here for the same reasons as in ``murphy_decomposition``.
+
+    ``decorr`` is evaluated as ``σ_o² - (r·σ_o)²`` and ``condbias`` as
+    ``(σ_f - r·σ_o)²`` with ``r·σ_o`` formed as ``cov/σ_f``, so neither term
+    needs ``r`` itself and both stay finite for a constant (σ = 0) series
+    while ``r`` is still correctly reported NaN.  ``decorr`` is
+    non-negative in exact arithmetic but can land a few ulp below zero when
+    ``|r| → 1``; it is deliberately not clipped, because clipping would break
+    the exact identity that ``check_identity`` verifies.
+    """
+    dim_list = [dim] if isinstance(dim, str) else list(dim)
+
+    if member_dim in forecasts.dims:
+        raise ValueError(
+            f"murphy_decomposition_ECMWF is a deterministic metric but the "
+            f"forecast has an ensemble dimension '{member_dim}' of size "
+            f"{forecasts.sizes[member_dim]}. Reduce it explicitly first (e.g. "
+            f"ensemble mean, or select one member) rather than relying on this "
+            f"metric to choose for you."
+        )
+
+    # The whole point is a per-station sample, so the spatial dim must survive.
+    spatial_dims = [d for d in ("point_index", "grid_index") if d in observations.dims]
+    for d in dim_list:
+        if d in spatial_dims:
+            raise ValueError(
+                f"dim={dim!r} includes the spatial dimension '{d}', which would "
+                f"pool stations together and defeat the per-station design. "
+                f"Use dim=['reference_time'] and aggregate afterwards with "
+                f"code/aggregate_murphy_results.py, or use "
+                f"murphy_decomposition_ECMWF_domain_mean for a gridded reference."
+            )
+    if not spatial_dims:
+        print("  murphy_decomposition_ECMWF: no point_index/grid_index dimension "
+              "found — results will not be per-station.", flush=True)
+
+    per_var = {}
+    for var in list(observations.data_vars):
+        if var not in forecasts.data_vars:
+            print(f"  murphy_decomposition_ECMWF: '{var}' not in forecasts — skipping.", flush=True)
+            continue
+
+        stats = _murphy_ecmwf_stats(observations[var], forecasts[var], dim_list,
+                                    var=var, valid_range=valid_range)
+
+        per_var[var] = xr.concat(
+            [_drop_nondim_coords(stats[s]) for s in _MURPHY_ECMWF_STATS],
+            dim=xr.Variable("stat", _MURPHY_ECMWF_STATS),
+        ).compute()
+
+    result = xr.Dataset(per_var)
+
+    # Reattach station metadata (dropped above so the concat can't conflict).
+    station_coords = {
+        c: observations.coords[c]
+        for c in _STATION_COORDS
+        if c in observations.coords and set(observations.coords[c].dims) <= set(result.dims)
+    }
+    if station_coords:
+        result = result.assign_coords(station_coords)
+
+    if check_identity:
+        _check_murphy_identity(result, rtol=identity_rtol, atol=identity_atol,
+                               label="murphy_decomposition_ECMWF",
+                               terms=_ECMWF_IDENTITY_TERMS)
+
+    return result
+
+
+def murphy_decomposition_ECMWF_domain_mean(observations, forecasts,
+                                           dim=("reference_time", "grid_index"),
+                                           valid_range=None, member_dim="member",
+                                           check_identity=True, identity_rtol=1e-6,
+                                           identity_atol=1e-8):
+    """Domain-mean Murphy (1988) skill-score decomposition of MSE.
+
+    Stands to ``murphy_decomposition_ECMWF`` exactly as
+    ``murphy_decomposition_domain_mean`` stands to ``murphy_decomposition``:
+    identical math, but BOTH ``reference_time`` AND the spatial dimension
+    (``grid_index``) are pooled by default into one number per lead_time::
+
+        bias     = (f̄ - ō)²
+        decorr   = σ_o²·(1 - r²)
+        condbias = σ_o²·(σ_f/σ_o - r)²
+        MSE      = bias + decorr + condbias        (exact identity)
+
+    Pooling the spatial dimension is legitimate for a regularly-gridded
+    reference (HA-AROME's own analysis, 3,071,581 equally-weighted cells) but
+    NOT for unevenly-distributed SYNOP stations — see
+    ``murphy_decomposition_domain_mean``'s docstring for the full argument,
+    which applies here unchanged.  See ``murphy_decomposition_ECMWF`` for why
+    this three-way split is the more direct smoothing diagnostic.
+
+    Parameters
+    ----------
+    observations, forecasts, dim, valid_range, member_dim, check_identity,
+    identity_rtol, identity_atol
+        Identical in meaning to ``murphy_decomposition_domain_mean``.
+
+    Returns
+    -------
+    xr.Dataset
+        One variable per input variable with a ``stat`` dimension (values as
+        in ``murphy_decomposition_ECMWF``) and whatever dims survive pooling
+        (typically just ``lead_time``).  No spatial dimension survives, so
+        there is no per-cell coordinate to reattach.
+    """
+    dim_list = [dim] if isinstance(dim, str) else list(dim)
+
+    if member_dim in forecasts.dims:
+        raise ValueError(
+            f"murphy_decomposition_ECMWF_domain_mean is a deterministic metric "
+            f"but the forecast has an ensemble dimension '{member_dim}' of size "
+            f"{forecasts.sizes[member_dim]}. Reduce it explicitly first (e.g. "
+            f"ensemble mean, or select one member) rather than relying on this "
+            f"metric to choose for you."
+        )
+
+    per_var = {}
+    for var in list(observations.data_vars):
+        if var not in forecasts.data_vars:
+            print(f"  murphy_decomposition_ECMWF_domain_mean: '{var}' not in "
+                  f"forecasts — skipping.", flush=True)
+            continue
+
+        stats = _murphy_ecmwf_stats(observations[var], forecasts[var], dim_list,
+                                    var=var, valid_range=valid_range)
+
+        per_var[var] = xr.concat(
+            [_drop_nondim_coords(stats[s]) for s in _MURPHY_ECMWF_STATS],
+            dim=xr.Variable("stat", _MURPHY_ECMWF_STATS),
+        ).compute()
+
+    result = xr.Dataset(per_var)
+
+    # No spatial dimension survives pooling, so unlike murphy_decomposition_ECMWF
+    # there is no per-cell/per-station coordinate to reattach here.
+
+    if check_identity:
+        _check_murphy_identity(result, rtol=identity_rtol, atol=identity_atol,
+                               label="murphy_decomposition_ECMWF_domain_mean",
+                               terms=_ECMWF_IDENTITY_TERMS)
 
     return result
 
