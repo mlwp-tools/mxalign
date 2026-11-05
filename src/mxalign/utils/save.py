@@ -37,9 +37,10 @@ class DatasetPath():
         return path
     
 def save_dataset(method, name, ds, **kwargs):
+    # DatasetPath reads the time property from attrs, so build it before dropping them
+    dataset = DatasetPath(name, ds)
     ds = ds.drop_attrs(deep=True)
     save_fn = getattr(ds, method)
-    dataset = DatasetPath(name, ds)
     path = dataset.substitute(kwargs.pop("path"))
     save_fn(path, **kwargs)
 
