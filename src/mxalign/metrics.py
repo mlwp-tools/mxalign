@@ -740,6 +740,10 @@ def power_spectrum(observations, forecasts, dim_x, dim_y, res,
     k_edges   = np.linspace(0.0, k_max, _n_bins + 1)
     k_centers = 0.5 * (k_edges[1:] + k_edges[:-1])
     digitized = np.digitize(k.flatten(), k_edges)
+    # Per-bin mean via bincount (2026-11-02): one pass over the field instead of one
+    # boolean mask per bin (~800 passes over 3M points on the 2 km grid). Same result:
+    # bin i in 1.._n_bins, empty bins -> 0.0; k == k_max lands in bin _n_bins+1, unused.
+    bin_counts = np.bincount(digitized, minlength=_n_bins + 2)[1:_n_bins + 1]
 
     def _field_spectrum(field_1d):
         """Isotropic power spectrum of a single 1-D field (grid_index order)."""
@@ -747,11 +751,9 @@ def power_spectrum(observations, forecasts, dim_x, dim_y, res,
         if np.any(np.isnan(field_2d)):
             return None
         P = np.abs(dctn(field_2d, type=2, norm='ortho')) ** 2
-        return np.array(
-            [P.flatten()[digitized == i].mean() if np.any(digitized == i) else 0.0
-             for i in range(1, _n_bins + 1)],
-            dtype=np.float32,
-        )
+        sums = np.bincount(digitized, weights=P.ravel(), minlength=_n_bins + 2)[1:_n_bins + 1]
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return np.where(bin_counts > 0, sums / bin_counts, 0.0).astype(np.float32)
 
     def _spectrum(da):
         lead_times = da.lead_time.values
