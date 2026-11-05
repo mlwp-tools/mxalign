@@ -212,7 +212,8 @@ def mse_by_domain(observations, forecasts, dim, lsm_zarr_path,
     return xr.Dataset(per_var)
 
 
-def qq_plot_data(observations, forecasts, quantiles_min, quantiles_max, quantiles_by, dim):
+def qq_plot_data(observations, forecasts, quantiles_min, quantiles_max, quantiles_by, dim,
+                 match_missing=False):
     """Compute empirical quantiles of observations and forecasts for a QQ plot.
 
     Pools all values across `dim` (e.g. point_index, reference_time, lead_time),
@@ -236,6 +237,13 @@ def qq_plot_data(observations, forecasts, quantiles_min, quantiles_max, quantile
     dim : str or list of str
         Dimension(s) to pool over. Remaining dims are kept in the output
         (e.g. omit ``lead_time`` to get one QQ curve per lead time).
+    match_missing : bool
+        If True, pool obs and forecasts over the same sample: forecasts are
+        masked where the obs is NaN, and obs where every forecast value at that
+        point (e.g. all members) is NaN. Without it the two quantile sets come
+        from different samples whenever obs are sparse (SYNOP tp is reported at
+        00/12Z only, ~1/3 of stations). Does the job of ``broadcast_nans``,
+        which cannot handle an ensemble ``member`` dim the obs lack.
 
     Returns
     -------
@@ -244,6 +252,15 @@ def qq_plot_data(observations, forecasts, quantiles_min, quantiles_max, quantile
     """
     q = _build_thresholds(quantiles_min, quantiles_max, quantiles_by)
     q = np.clip(q, 0.0, 1.0)
+    if match_missing:
+        observations, forecasts = observations.copy(), forecasts.copy()
+        for v in observations.data_vars:
+            if v not in forecasts:
+                continue
+            o, f = observations[v], forecasts[v]
+            extra = [d for d in f.dims if d not in o.dims]
+            forecasts[v] = f.where(o.notnull())
+            observations[v] = o.where(f.notnull().any(dim=extra) if extra else f.notnull())
     obs_q = observations.quantile(q, dim=dim).rename({v: f"{v}_obs" for v in observations.data_vars})
     fct_q = forecasts.quantile(q, dim=dim).rename({v: f"{v}_fct" for v in forecasts.data_vars})
     return xr.merge([obs_q, fct_q])
