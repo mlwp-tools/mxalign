@@ -105,11 +105,13 @@ def _align_observation_observation(ds1, ds2, only_common=False):
 
 def _align_observation_forecast(ds_observation, ds_forecast, only_common=False):
     ds_forecast_cut = ds_forecast.time.add_valid_time()
-    if ds_forecast_cut.reference_time.min().values < ds_observation.valid_time.min().values:
-        ds_forecast_cut = ds_forecast_cut.sel(
-            reference_time=slice(
-                ds_observation.valid_time.min().values, None)
-        )
+    # Keep a run only if ALL its valid times are at or after the first obs, so every lead
+    # has the same runs. Comparing reference_time with the first obs valid_time instead
+    # dropped the first run whenever the shortest lead is > 0 (e.g. steps ["6h", "60h"]).
+    obs_start = ds_observation.valid_time.min().values
+    covered = (ds_forecast_cut.valid_time >= obs_start).all("lead_time").values
+    if not covered.all():
+        ds_forecast_cut = ds_forecast_cut.isel(reference_time=np.flatnonzero(covered))
     if ds_forecast_cut.valid_time.max().values > ds_observation.valid_time.max().values:
         # The forecast time-step/lead times might not always align with the maximum observation time
         valid_diff = (ds_forecast_cut["valid_time"]-(ds_observation["valid_time"].max())).isel(lead_time=-1)
