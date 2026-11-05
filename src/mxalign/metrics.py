@@ -75,6 +75,53 @@ def ets(observations, forecasts, threshold_min, threshold_max, threshold_by,
     return (hits - hits_random) / denom.where(valid)
 
 
+def ets_verif(observations, forecasts, thresholds, dim="point_index", variables=None):
+    """Equitable Threat Score, as ``verif.metric.Ets`` (MET Norway's verif package).
+
+    Differs from :func:`ets` so that it reproduces verif's numbers:
+
+    - an event is strictly ``value > threshold`` (verif's default bin type ``above``),
+      for observations and forecasts alike, not ``>=``;
+    - only pairs where both the observation and the forecast are valid are counted;
+    - no minimum number of events: ETS is NaN only where its denominator is 0.
+
+    ``ETS = (a - ar) / (a + b + c - ar)`` with ``ar = (a + b) (a + c) / N``, where a is
+    hits, b false alarms, c misses and N all valid pairs.
+
+    Parameters
+    ----------
+    observations, forecasts : xr.Dataset
+        Aligned observation and forecast datasets.
+    thresholds : scalar or list of scalar
+        The thresholds to score. To use different thresholds per variable, run one
+        metric per variable with ``variables``.
+    dim : str or list of str
+        Dimension(s) to pool over. Remaining dims are kept in the output.
+    variables : list of str, optional
+        Subset of variables to score. If None, all variables of ``observations``.
+
+    Returns
+    -------
+    xr.Dataset with an extra 'threshold' dimension.
+    """
+    thresholds = xr.DataArray(np.atleast_1d(thresholds).astype(float), dims="threshold")
+    thresholds = thresholds.assign_coords(threshold=thresholds.values)
+    names = list(observations.data_vars) if variables is None else variables
+    result = {}
+    for v in names:
+        o, f = observations[v], forecasts[v]
+        valid = o.notnull() & f.notnull()
+        o_event, f_event = o > thresholds, f > thresholds
+        a = (f_event & o_event & valid).sum(dim)
+        b = (f_event & ~o_event & valid).sum(dim)
+        c = (~f_event & o_event & valid).sum(dim)
+        n = valid.sum(dim)
+        ar = (a + b) / 1.0 / n * (a + c)
+        denom = a + b + c - ar
+        result[v] = (a - ar) / 1.0 / denom.where(denom != 0)
+    return xr.Dataset(result)
+
+
 def mse_by_domain(observations, forecasts, dim, lsm_zarr_path,
                   lsm_variable="lsm", skipna=True, valid_range=None):
     """MSE computed separately for all domain, land only, and ocean only.
