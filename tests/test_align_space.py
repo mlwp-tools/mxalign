@@ -136,6 +136,84 @@ class TestGridToGrid:
         with pytest.raises(NotImplementedError):
             ds_grid.mx.align_space_with(ds_grid2)
 
+    def test_different_grid_sizes_raise(self, ds_grid: xr.Dataset) -> None:
+        """Check that grids of different sizes raise ``NotImplementedError``.
+
+        Parameters
+        ----------
+        ds_grid : xr.Dataset
+            Lat/lon grid forecast fixture.
+        """
+        ds_grid2 = ds_grid.isel(longitude=[0, 1]).assign_attrs(_props("grid"))
+
+        with pytest.raises(NotImplementedError):
+            ds_grid.mx.align_space_with(ds_grid2)
+
+    def test_same_stacked_grid_other_longitude_convention(self) -> None:
+        """Check that a stacked grid matches itself written in the other convention.
+
+        The result takes the reference's longitudes and keeps its values.
+        """
+        lats, lons = np.array([-1.0, 0.0, 1.0]), np.array([0.0, 120.0, 240.0])
+        grid = xr.Dataset(
+            {"temp": (["latitude", "longitude"], np.arange(9.0).reshape(3, 3))},
+            coords={"latitude": lats, "longitude": lons},
+            attrs=_props("grid"),
+        )
+        ds1 = grid.stack(grid_index=["latitude", "longitude"]).reset_index("grid_index")
+        ds2 = ds1.assign_coords(longitude=(ds1.longitude + 180) % 360 - 180)
+
+        result = ds1.mx.align_space_with(ds2)
+
+        np.testing.assert_array_equal(
+            result["longitude"].values, ds2["longitude"].values
+        )
+        np.testing.assert_array_equal(result["temp"].values, ds1["temp"].values)
+
+    def test_same_grid_other_longitude_convention_and_order(self) -> None:
+        """Check that a lat/lon grid matches itself in the other convention and order.
+
+        A 0–360 grid aligned to the same grid in [-180, 180) is reordered to
+        the reference's longitudes.
+        """
+        lats = np.array([-1.0, 0.0, 1.0])
+
+        def grid(lons: np.ndarray) -> xr.Dataset:
+            """Build a grid whose values depend on the meridian, not its label.
+
+            Parameters
+            ----------
+            lons : np.ndarray
+                Grid longitudes.
+
+            Returns
+            -------
+            xr.Dataset
+                Grid dataset with ``latitude`` and ``longitude`` dims.
+            """
+            temp = (
+                lats[:, None]
+                + np.cos(np.radians(lons))[None, :]
+                + np.sin(np.radians(lons))
+            )
+            return xr.Dataset(
+                {"temp": (["latitude", "longitude"], temp)},
+                coords={"latitude": lats, "longitude": lons},
+                attrs=_props("grid"),
+            )
+
+        ds1 = grid(np.arange(0.0, 360.0, 90.0))
+        ds2 = grid(np.arange(-180.0, 180.0, 90.0))
+
+        result = ds1.mx.align_space_with(ds2)
+
+        np.testing.assert_array_equal(
+            result["longitude"].values, ds2["longitude"].values
+        )
+        np.testing.assert_allclose(
+            result["temp"].values, ds2["temp"].values, atol=1e-12
+        )
+
     def test_result_stays_grid(self, ds_grid: xr.Dataset) -> None:
         """Check that grid-to-grid alignment keeps the grid space trait.
 
@@ -249,7 +327,9 @@ class TestGridToPoint:
         result = ds_stacked.mx.align_space_with(ds_point, method="delaunay")
 
         assert result["temp"].isel(point_index=0).item() == pytest.approx(0.0)
-        assert result["temp"].isel(point_index=1).item() == pytest.approx(1.0)
+        assert result["temp"].isel(point_index=1).item() == pytest.approx(
+            1.0, abs=1e-4
+        )  # linear on the sphere
         assert result["temp"].isel(point_index=2).item() == pytest.approx(2.0)
 
 

@@ -8,7 +8,7 @@ import numpy as np
 import dask.array as dda
 import xarray as xr
 
-from scipy.spatial import Delaunay
+from scipy.spatial import ConvexHull, cKDTree
 from scipy.sparse import csr_matrix
 
 from .base import BaseInterpolator
@@ -24,15 +24,30 @@ logger = logging.getLogger(__name__)
 _WEIGHTS_CACHE: dict[tuple[str, str], csr_matrix] = {}
 _WEIGHTS_CACHE_SIZE = 8
 
+# A target counts as inside a triangle when its most negative coordinate is
+# within this fraction of the coordinates' total (points on an edge).
+_INSIDE_TOLERANCE = 1e-12
+# A hull facet is part of the triangulation of the sphere when the origin is
+# at least this far inside its plane. A triangle on the sphere is only closer
+# when its circumcircle is nearly a great circle.
+_PLANE_OFFSET_TOLERANCE = 1e-6
+# Walks from the triangle with the nearest centre mostly take a few steps, but
+# can cross a long fan of thin triangles (qhull's split of a cocircular row of
+# grid points). This only bounds a walk that doesn't converge, which then
+# falls back to a full search.
+_MAX_WALK_STEPS = 4096
+
 
 @register_interpolator
 class DelaunayInterpolator(BaseInterpolator):
     """Linear grid-to-point interpolation via Delaunay triangulation.
 
-    The source grid points are triangulated in (latitude, longitude) and each
-    target point gets barycentric weights from its enclosing triangle. The
-    sparse weight matrix is cached per source/target coordinate pair. Target
-    points outside the convex hull of the source grid get NaN.
+    The source grid points are triangulated on the sphere and each target
+    point gets barycentric weights from its enclosing triangle, so the source
+    and target may use different longitude conventions (0–360 or
+    [-180, 180)). The sparse weight matrix is cached per source/target
+    coordinate pair. Target points outside the spherical convex hull of the
+    source grid get NaN.
 
     Parameters
     ----------
@@ -161,76 +176,175 @@ def _get_weights(source_points: np.ndarray, target_points: np.ndarray) -> csr_ma
     if key not in _WEIGHTS_CACHE:
         if len(_WEIGHTS_CACHE) >= _WEIGHTS_CACHE_SIZE:
             _WEIGHTS_CACHE.pop(next(iter(_WEIGHTS_CACHE)))  # drop the oldest entry
-        _WEIGHTS_CACHE[key] = _build_weight_matrix(
-            Delaunay(source_points), source_points, target_points
-        )
+        _WEIGHTS_CACHE[key] = _build_weight_matrix(source_points, target_points)
     return _WEIGHTS_CACHE[key]
 
 
-def _build_weight_matrix(
-    triangulation: Delaunay,
-    source_points: np.ndarray,
-    target_points: np.ndarray,
-) -> csr_matrix:
-    """Build a sparse ``(n_target, n_source)`` barycentric weight matrix.
-
-    Target points outside the convex hull of the source points get NaN
-    weights.
+def _to_unit_vectors(points: np.ndarray) -> np.ndarray:
+    """Convert (latitude, longitude) in degrees to 3-D unit vectors.
 
     Parameters
     ----------
-    triangulation : Delaunay
-        Delaunay triangulation of ``source_points``.
+    points : np.ndarray
+        Coordinates, shape ``(n, 2)`` as (latitude, longitude) in degrees.
+
+    Returns
+    -------
+    np.ndarray
+        Unit vectors, shape ``(n, 3)``.
+    """
+    lat, lon = np.radians(points[:, 0]), np.radians(points[:, 1])
+    return np.column_stack(
+        (np.cos(lat) * np.cos(lon), np.cos(lat) * np.sin(lon), np.sin(lat))
+    )
+
+
+def _cone_coordinates(corners: np.ndarray, targets: np.ndarray) -> np.ndarray:
+    """Solve ``targets = w @ corners`` for each target and its triangle.
+
+    All three coordinates are non-negative exactly when the target direction
+    lies in the cone that the origin and the triangle span. Divided by their
+    sum, they are the barycentric coordinates of the point where that
+    direction crosses the triangle.
+
+    Parameters
+    ----------
+    corners : np.ndarray
+        Triangle corners, shape ``(n, 3, 3)``: ``corners[i, k]`` is corner
+        ``k`` of target ``i``'s triangle.
+    targets : np.ndarray
+        Target unit vectors, shape ``(n, 3)``.
+
+    Returns
+    -------
+    np.ndarray
+        Coordinates, shape ``(n, 3)``; NaN for a degenerate triangle.
+    """
+    a, b, c = corners[:, 0], corners[:, 1], corners[:, 2]
+    det = np.einsum("ij,ij->i", a, np.cross(b, c))
+    w = np.column_stack(
+        (
+            np.einsum("ij,ij->i", targets, np.cross(b, c)),
+            np.einsum("ij,ij->i", a, np.cross(targets, c)),
+            np.einsum("ij,ij->i", a, np.cross(b, targets)),
+        )
+    )
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return w / det[:, np.newaxis]
+
+
+def _build_weight_matrix(
+    source_points: np.ndarray, target_points: np.ndarray
+) -> csr_matrix:
+    """Build a sparse ``(n_target, n_source)`` barycentric weight matrix.
+
+    The source points are triangulated on the unit sphere: the convex hull of
+    their 3-D unit vectors is their spherical Delaunay triangulation. A
+    target's weights are the barycentric coordinates of the point where its
+    direction crosses the triangle it falls in. This doesn't depend on the
+    longitude convention of either dataset and has no seam; the poles need no
+    special case.
+
+    Each target's triangle is found by a walk over neighbouring triangles,
+    starting at the triangle with the nearest centre. Targets outside the
+    spherical convex hull of the source points get NaN weights. A source that
+    doesn't fit in a hemisphere covers the whole sphere, so a hole in it (e.g.
+    a missing polar cap) is bridged rather than left NaN.
+
+    Parameters
+    ----------
     source_points : np.ndarray
-        Source coordinates, shape ``(n_source, ndim)``.
+        Source coordinates, shape ``(n_source, 2)`` as (latitude, longitude)
+        in degrees.
     target_points : np.ndarray
-        Target coordinates, shape ``(n_target, ndim)``.
+        Target coordinates, shape ``(n_target, 2)`` as (latitude, longitude)
+        in degrees.
 
     Returns
     -------
     csr_matrix
         Sparse ``(n_target, n_source)`` weight matrix.
     """
-    print("Calculating interpolation-weight matrix")
+    logger.info("Calculating interpolation-weight matrix")
 
     n_target = len(target_points)
     n_source = len(source_points)
-    ndim = source_points.shape[1]  # 2 for lat/lon
+    source = _to_unit_vectors(source_points)
+    target = _to_unit_vectors(target_points)
 
-    # Find which simplex each target point falls in; -1 means outside convex hull
-    simplex_indices = triangulation.find_simplex(target_points)  # (n_target,)
+    hull = ConvexHull(source)
+    triangles = hull.simplices  # (n_triangle, 3) source indices
+    # Hull facets with the origin on or beyond their plane close the hull of a
+    # regional grid from below; they're not part of the triangulation of the
+    # sphere. ``equations`` holds (normal, offset), with the inside negative.
+    # The margin catches lid facets along a meridian, whose plane holds the
+    # origin up to rounding.
+    on_sphere = hull.equations[:, 3] < -_PLANE_OFFSET_TOLERANCE
 
-    # Map outside points to simplex 0 temporarily to avoid index errors —
-    # their weights will be NaN'd out below
-    safe_indices = np.where(simplex_indices >= 0, simplex_indices, 0)
+    found = np.full(n_target, -1, dtype=np.intp)
+    coords = np.full((n_target, 3), np.nan)
+    active = np.arange(n_target)
 
-    # Vertices of each target point's simplex: (n_target, ndim+1)
-    simplex_vertices = triangulation.simplices[safe_indices]
+    # The walk's edge tests only hold for targets less than 90° from the
+    # triangles. For a regional source, drop targets outside a cap around it:
+    # they are outside the triangulation, and the rest are close enough. This
+    # also spares the nearest-centre search below its slow far-away queries.
+    if not on_sphere.all():
+        centre = source.mean(axis=0)
+        centre /= np.linalg.norm(centre)
+        cos_radius = (source @ centre).min()
+        if cos_radius > 0:
+            active = active[target @ centre >= cos_radius - _INSIDE_TOLERANCE]
 
-    # Recover barycentric coordinates using the affine transforms stored in
-    # triangulation.transform: shape (nsimplex, ndim+1, ndim)
-    #   transform[s, :ndim, :] — inverse of the edge matrix for simplex s
-    #   transform[s,  ndim, :] — the ndim-th vertex (origin) of simplex s
-    Tinv = triangulation.transform[safe_indices, :ndim, :]  # (n_target, ndim, ndim)
-    origin = triangulation.transform[safe_indices, ndim, :]  # (n_target, ndim)
+    # Start each walk at the triangle on the sphere with the nearest centre
+    sphere_triangles = np.flatnonzero(on_sphere)
+    centres = source[triangles[sphere_triangles]].mean(axis=1)
+    current = sphere_triangles[cKDTree(centres).query(target[active])[1]]
 
-    r = target_points - origin  # (n_target, ndim)
-    bary_partial = np.einsum("nij,nj->ni", Tinv, r)  # (n_target, ndim)
-    last = 1.0 - bary_partial.sum(axis=1, keepdims=True)
-    bary = np.concatenate([bary_partial, last], axis=1)  # (n_target, ndim+1)
+    for _ in range(_MAX_WALK_STEPS):
+        w = _cone_coordinates(source[triangles[current]], target[active])
+        k = np.argmin(np.where(np.isnan(w), np.inf, w), axis=1)
+        inside = w[np.arange(len(active)), k] >= -_INSIDE_TOLERANCE * np.abs(w).sum(
+            axis=1
+        )
+        found[active[inside]] = current[inside]
+        coords[active[inside]] = w[inside]
+        # Step across the edge opposite the most negative coordinate. Leaving
+        # the triangulation of the sphere means the target is outside it.
+        step = hull.neighbors[current[~inside], k[~inside]]
+        keep = on_sphere[step]
+        active, current = active[~inside][keep], step[keep]
+        if active.size == 0:
+            break
+    else:
+        logger.warning(
+            "Delaunay interpolation: %d target points not located by walking, "
+            "searching all triangles.",
+            active.size,
+        )
+        corners = source[triangles[sphere_triangles]]
+        for i in active:
+            w = _cone_coordinates(
+                corners, np.broadcast_to(target[i], (len(sphere_triangles), 3))
+            )
+            hit = np.flatnonzero(
+                w.min(axis=1) >= -_INSIDE_TOLERANCE * np.abs(w).sum(axis=1)
+            )
+            if hit.size:
+                found[i] = sphere_triangles[hit[0]]
+                coords[i] = w[hit[0]]
+
+    located = found >= 0
+
+    bary = coords / coords.sum(axis=1, keepdims=True)
+    bary[~located] = np.nan
+    cols = triangles[np.where(located, found, 0)]
 
     # Flatten into coordinate format (COO) for sparse matrix construction
-    rows = np.repeat(np.arange(n_target), ndim + 1)
-    cols = simplex_vertices.ravel()
-    vals = bary.ravel()
+    rows = np.repeat(np.arange(n_target), 3)
+    W = csr_matrix((bary.ravel(), (rows, cols.ravel())), shape=(n_target, n_source))
 
-    # NaN out weights for points outside the convex hull
-    outside = simplex_indices == -1
-    vals[np.repeat(outside, ndim + 1)] = np.nan
-
-    W = csr_matrix((vals, (rows, cols)), shape=(n_target, n_source))
-
-    print("Done")
+    logger.info("Done")
 
     return W
 

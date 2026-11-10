@@ -3,8 +3,10 @@
 Both interpolators take a stacked or lat/lon-dim source GRID dataset and
 produce a POINT dataset aligned to target point locations.
 
-Fixtures use temp = lat + lon, a linear function, so both bilinear (xarray)
-and linear barycentric (Delaunay) interpolation reproduce it exactly.
+Fixtures use temp = lat + lon, a linear function, so bilinear (xarray)
+interpolation reproduces it exactly. Delaunay interpolates linearly on the
+sphere, which reproduces it at the grid nodes and to within ``SPHERE_ATOL``
+between them on these 1° cells.
 
 Trait / accessor-level tests live in test_align_space.py.
 """
@@ -22,6 +24,10 @@ from mxalign.alignment.interpolations import delaunay
 from mxalign.alignment.interpolations.delaunay import DelaunayInterpolator
 from mxalign.alignment.interpolations.interpolate import interpolate
 from mxalign.alignment.interpolations.xarray import XarrayInterpolator
+
+# Delaunay interpolation is linear on the sphere, not in lat/lon: on 1° cells
+# a field linear in lat/lon is reproduced to about 2e-5 between grid nodes.
+SPHERE_ATOL = 1e-4
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -293,7 +299,9 @@ class TestDelaunayInterpolator:
         result = DelaunayInterpolator(target_points)._interpolate(grid_stacked)
 
         # Barycentric interpolation is exact for any linear function
-        assert result["temp"].isel(point_index=1).item() == pytest.approx(1.0)
+        assert result["temp"].isel(point_index=1).item() == pytest.approx(
+            1.0, abs=SPHERE_ATOL
+        )
 
     def test_output_has_point_index_dim(
         self, grid_stacked: xr.Dataset, target_points: xr.Dataset
@@ -388,7 +396,9 @@ class TestDelaunayInterpolator:
         DelaunayInterpolator(target_points)._interpolate(grid_stacked)
         result = DelaunayInterpolator(target_points)._interpolate(other)
 
-        assert result["temp"].isel(point_index=1).item() == pytest.approx(1.0)
+        assert result["temp"].isel(point_index=1).item() == pytest.approx(
+            1.0, abs=SPHERE_ATOL
+        )
 
     def test_rechunk_keeps_block_size_bounded(self, target_points: xr.Dataset) -> None:
         """Check that rechunking ``grid_index`` keeps blocks within the chunk budget.
@@ -412,7 +422,9 @@ class TestDelaunayInterpolator:
         # Merging grid_index into one chunk must not grow blocks past the budget
         rows_per_block = max(result["temp"].chunks[0])
         assert rows_per_block * n_source * 8 <= 64 * 1024
-        np.testing.assert_allclose(result["temp"].isel(step=0).values, [0.0, 1.0, 2.0])
+        np.testing.assert_allclose(
+            result["temp"].isel(step=0).values, [0.0, 1.0, 2.0], atol=SPHERE_ATOL
+        )
 
     def test_outside_convex_hull_is_nan(self, grid_stacked: xr.Dataset) -> None:
         """Check that a point outside the convex hull is NaN.
@@ -431,6 +443,203 @@ class TestDelaunayInterpolator:
         result = DelaunayInterpolator(far_point)._interpolate(grid_stacked)
 
         assert np.isnan(result["temp"].isel(point_index=0).item())
+
+
+# ---------------------------------------------------------------------------
+# Longitude conventions
+# ---------------------------------------------------------------------------
+
+# Stations as (latitude, longitude in [-180, 180)). Heathrow lies in the seam
+# strip of a 0–360 grid (between 359° and 360°), the last one in the seam strip
+# of a [-180, 180) grid (between 179° and 180°).
+STATIONS = {
+    "Uccle": (50.80, 4.36),
+    "Heathrow": (51.48, -0.45),
+    "Reykjavik": (64.13, -21.90),
+    "Honolulu": (21.31, -157.86),
+    "near 180E": (-16.80, 179.60),
+}
+
+
+def _smooth_field(lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
+    """Evaluate a smooth field that is periodic in longitude.
+
+    Parameters
+    ----------
+    lat : np.ndarray
+        Latitudes in degrees.
+    lon : np.ndarray
+        Longitudes in degrees, in either convention.
+
+    Returns
+    -------
+    np.ndarray
+        ``cos(lon) cos(lat) + sin(lat)``.
+    """
+    lat, lon = np.radians(lat), np.radians(lon)
+    return np.cos(lon) * np.cos(lat) + np.sin(lat)
+
+
+def _global_grid(convention: str) -> xr.Dataset:
+    """Build a global 1° lat/lon grid of ``_smooth_field``.
+
+    Parameters
+    ----------
+    convention : str
+        ``"0-360"`` or ``"-180-180"``: the range of the grid's longitudes.
+
+    Returns
+    -------
+    xr.Dataset
+        Grid dataset with ``latitude`` and ``longitude`` dims.
+    """
+    lats = np.arange(-89.5, 90.0, 1.0)
+    lons = (
+        np.arange(0.0, 360.0, 1.0)
+        if convention == "0-360"
+        else np.arange(-180.0, 180.0, 1.0)
+    )
+    return xr.Dataset(
+        {
+            "temp": (
+                ["latitude", "longitude"],
+                _smooth_field(lats[:, None], lons[None, :]),
+            )
+        },
+        coords={"latitude": lats, "longitude": lons},
+    )
+
+
+def _stations(convention: str) -> xr.Dataset:
+    """Provide ``STATIONS`` as a point dataset.
+
+    Parameters
+    ----------
+    convention : str
+        ``"0-360"`` or ``"-180-180"``: the range of the station longitudes.
+
+    Returns
+    -------
+    xr.Dataset
+        Coordinate-only dataset with lat/lon along ``point_index``.
+    """
+    lat, lon = np.array(list(STATIONS.values())).T
+    if convention == "0-360":
+        lon = lon % 360
+    return xr.Dataset(
+        coords={"latitude": ("point_index", lat), "longitude": ("point_index", lon)}
+    )
+
+
+def _as_source(grid: xr.Dataset, interpolator: type) -> xr.Dataset:
+    """Stack ``grid`` to ``grid_index`` if ``interpolator`` needs a stacked source.
+
+    Parameters
+    ----------
+    grid : xr.Dataset
+        Grid dataset with ``latitude`` and ``longitude`` dims.
+    interpolator : type
+        Interpolator class the source is for.
+
+    Returns
+    -------
+    xr.Dataset
+        ``grid`` itself, or stacked for ``DelaunayInterpolator``.
+    """
+    if interpolator is DelaunayInterpolator:
+        return grid.stack(grid_index=["latitude", "longitude"]).reset_index(
+            "grid_index"
+        )
+    return grid
+
+
+@pytest.mark.parametrize("interpolator", [XarrayInterpolator, DelaunayInterpolator])
+@pytest.mark.parametrize("grid_convention", ["0-360", "-180-180"])
+@pytest.mark.parametrize("station_convention", ["0-360", "-180-180"])
+def test_global_grid_any_longitude_convention(
+    interpolator: type[XarrayInterpolator] | type[DelaunayInterpolator],
+    grid_convention: str,
+    station_convention: str,
+) -> None:
+    """Check that a global grid is interpolated to stations in either convention.
+
+    This includes stations in the seam strip between the grid's last and first
+    longitude.
+
+    Parameters
+    ----------
+    interpolator : type[XarrayInterpolator] | type[DelaunayInterpolator]
+        Interpolator class under test.
+    grid_convention : str
+        Longitude range of the grid.
+    station_convention : str
+        Longitude range of the stations.
+    """
+    source = _as_source(_global_grid(grid_convention), interpolator)
+    stations = _stations(station_convention)
+
+    result = interpolator(stations)._interpolate(source)
+
+    lat, lon = np.array(list(STATIONS.values())).T
+    np.testing.assert_allclose(
+        result["temp"].values, _smooth_field(lat, lon), atol=1e-3
+    )
+    np.testing.assert_array_equal(
+        result["longitude"].values, stations["longitude"].values
+    )
+
+
+@pytest.mark.parametrize("interpolator", [XarrayInterpolator, DelaunayInterpolator])
+def test_regional_grid_other_longitude_convention(
+    interpolator: type[XarrayInterpolator] | type[DelaunayInterpolator],
+) -> None:
+    """Check that a regional grid in 0–360 is interpolated to stations in [-180, 180).
+
+    Stations outside the grid get NaN.
+
+    Parameters
+    ----------
+    interpolator : type[XarrayInterpolator] | type[DelaunayInterpolator]
+        Interpolator class under test.
+    """
+    # 40–60N, 20W–20E, stored as 340..359, 0..20
+    lats = np.arange(40.0, 60.5, 0.5)
+    lons = np.arange(-20.0, 20.5, 0.5) % 360
+    grid = xr.Dataset(
+        {
+            "temp": (
+                ["latitude", "longitude"],
+                _smooth_field(lats[:, None], lons[None, :]),
+            )
+        },
+        coords={"latitude": lats, "longitude": lons},
+    )
+    source = _as_source(grid, interpolator)
+    stations = _stations("-180-180")
+
+    result = interpolator(stations)._interpolate(source)
+
+    lat, lon = np.array(list(STATIONS.values())).T
+    inside = (lat >= 40) & (lat <= 60) & (np.abs(lon) <= 20)  # Uccle, Heathrow
+    np.testing.assert_allclose(
+        result["temp"].values[inside], _smooth_field(lat, lon)[inside], atol=1e-4
+    )
+    assert np.isnan(result["temp"].values[~inside]).all()
+
+
+def test_delaunay_poles_need_no_special_case() -> None:
+    """Check that Delaunay interpolates at the poles of a grid without pole rows."""
+    source = _as_source(_global_grid("0-360"), DelaunayInterpolator)
+    poles = xr.Dataset(
+        coords={
+            "latitude": ("point_index", np.array([90.0, -90.0])),
+            "longitude": ("point_index", np.array([0.0, 123.0])),
+        }
+    )
+
+    result = DelaunayInterpolator(poles)._interpolate(source)
+
+    np.testing.assert_allclose(result["temp"].values, [1.0, -1.0], atol=1e-3)
 
 
 # ---------------------------------------------------------------------------

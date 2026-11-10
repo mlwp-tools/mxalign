@@ -4,6 +4,10 @@ from .base import BaseInterpolator
 from .registry import register_interpolator
 from mlwp_data_specs.specs.traits.spatial_coordinate import Space
 
+from ..space import COORD_TOLERANCE
+from ...utils.longitude import is_periodic, wrap_longitude
+
+import numpy as np
 import xarray as xr
 
 
@@ -11,9 +15,11 @@ import xarray as xr
 class XarrayInterpolator(BaseInterpolator):
     """Interpolate a grid dataset to points with ``xarray.Dataset.interp``.
 
-    Lat/lon-dimension grids are interpolated directly in longitude/latitude;
-    projected grids are interpolated in ``xc``/``yc`` after projecting the
-    target points with the source CRS (stacked grids are unstacked first).
+    Lat/lon-dimension grids are interpolated directly in longitude/latitude,
+    whichever longitude convention (0–360 or [-180, 180)) the source and
+    target use; projected grids are interpolated in ``xc``/``yc`` after
+    projecting the target points with the source CRS (stacked grids are
+    unstacked first).
 
     Takes the constructor arguments of :class:`BaseInterpolator`: a point
     ``target_dataset`` with ``longitude`` and ``latitude`` coordinates, and
@@ -109,6 +115,12 @@ class XarrayInterpolator(BaseInterpolator):
     def _interpolate_from_latlon(self, source_dataset: xr.Dataset) -> xr.Dataset:
         """Interpolate a lat/lon-dim source directly to target lon/lat points.
 
+        The target longitudes are shifted by multiples of 360° into the
+        source's longitude range, so the two may use different conventions
+        (0–360 or [-180, 180)). A global source gets its first longitude
+        column repeated after its last, so targets between them are
+        interpolated across the seam instead of getting NaN.
+
         Parameters
         ----------
         source_dataset : xr.Dataset
@@ -117,11 +129,28 @@ class XarrayInterpolator(BaseInterpolator):
         Returns
         -------
         xr.Dataset
-            The source interpolated to the target points.
+            The source interpolated to the target points, with the target
+            ``longitude``/``latitude`` coordinates.
         """
+        if not source_dataset.indexes["longitude"].is_monotonic_increasing:
+            source_dataset = source_dataset.sortby("longitude")
+        lon = source_dataset["longitude"].values
+        # Pad unless the grid already repeats its first column at +360°
+        if is_periodic(lon) and lon[-1] < lon[0] + 360.0 - COORD_TOLERANCE:
+            source_dataset = source_dataset.pad(longitude=(0, 1), mode="wrap")
+            source_dataset = source_dataset.assign_coords(
+                longitude=np.append(lon, lon[0] + 360.0)
+            )
+
         longitude = self.target_dataset["longitude"]
         latitude = self.target_dataset["latitude"]
         ds_out = source_dataset.interp(
-            longitude=longitude, latitude=latitude, **self.options
+            longitude=xr.DataArray(
+                wrap_longitude(longitude.values, lon[0]), dims=longitude.dims
+            ),
+            latitude=xr.DataArray(latitude.values, dims=latitude.dims),
+            **self.options,
         )
-        return ds_out
+        # As in _interpolate_from_xcyc: the target DataArrays carry the
+        # point_index index and any other point coords
+        return ds_out.assign_coords(longitude=longitude, latitude=latitude)

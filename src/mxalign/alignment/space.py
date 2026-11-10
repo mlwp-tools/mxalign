@@ -3,6 +3,8 @@
 import numpy as np
 import xarray as xr
 
+from ..utils.longitude import longitude_difference, wrap_longitude
+
 # Tolerance in degrees that the coordinates of two grids can differ while still
 # being interpreted as the same grid. 0.0001 degrees ~ 10m at 45 deg latitude.
 COORD_TOLERANCE = 0.0001
@@ -61,7 +63,12 @@ def align_space(
 
 
 def align_grid_grid(ds1: xr.Dataset, ds2: xr.Dataset, **kwargs: object) -> xr.Dataset:
-    """Return ``ds1`` unchanged if its grid matches ``ds2``'s within ``COORD_TOLERANCE``.
+    """Return ``ds1`` on ``ds2``'s grid if the two are the same grid.
+
+    The grids are the same when their latitudes, and their longitudes modulo
+    360°, agree within ``COORD_TOLERANCE``. Longitudes may use different
+    conventions (0–360 or [-180, 180)); then ``ds1`` gets ``ds2``'s
+    longitudes, and a ``longitude`` dimension is reordered to ``ds2``'s order.
 
     Parameters
     ----------
@@ -75,29 +82,46 @@ def align_grid_grid(ds1: xr.Dataset, ds2: xr.Dataset, **kwargs: object) -> xr.Da
     Returns
     -------
     xr.Dataset
-        ``ds1``, unchanged.
+        ``ds1`` itself if its coordinates match ``ds2``'s within
+        ``COORD_TOLERANCE``, otherwise ``ds1`` with ``ds2``'s longitudes.
 
     Raises
     ------
     NotImplementedError
-        If the ``longitude``/``latitude`` coordinates of the two grids differ
-        by more than ``COORD_TOLERANCE`` (regridding is not implemented).
+        If the two grids differ by more than ``COORD_TOLERANCE``
+        (regridding is not implemented).
     """
-    if np.array_equal(
-        ds1["longitude"].values, ds2["longitude"].values
-    ) and np.array_equal(ds1["latitude"].values, ds2["latitude"].values):
+    lon1, lat1 = ds1["longitude"].values, ds1["latitude"].values
+    lon2, lat2 = ds2["longitude"].values, ds2["latitude"].values
+
+    if lat1.shape != lat2.shape or lon1.shape != lon2.shape:
+        raise NotImplementedError("Regridding not implemented")
+    if np.array_equal(lon1, lon2) and np.array_equal(lat1, lat2):
         return ds1
-    elif np.allclose(
-        ds1["longitude"].values, ds2["longitude"].values, atol=COORD_TOLERANCE
-    ) and np.allclose(
-        ds1["latitude"].values, ds2["latitude"].values, atol=COORD_TOLERANCE
-    ):
+    if not np.allclose(lat1, lat2, atol=COORD_TOLERANCE):
+        raise NotImplementedError("Regridding not implemented")
+    if np.allclose(lon1, lon2, atol=COORD_TOLERANCE):
         print(
             f"Some lat-lon coordinates differ but within {COORD_TOLERANCE}°, treating as equal"
         )
         return ds1
-    else:
-        raise NotImplementedError("Regridding not implemented")
+
+    # Same points in another longitude convention
+    if np.allclose(longitude_difference(lon1, lon2), 0.0, atol=COORD_TOLERANCE):
+        return ds1.assign_coords(longitude=ds2["longitude"].variable)
+
+    # A longitude dimension in another convention can also be in another order
+    if "longitude" in ds1.dims and "longitude" in ds2.dims:
+        wrapped = wrap_longitude(lon1, lon2.min() - COORD_TOLERANCE)
+        order1, order2 = np.argsort(wrapped), np.argsort(lon2)
+        if np.allclose(wrapped[order1], lon2[order2], atol=COORD_TOLERANCE):
+            reorder = np.empty_like(order1)
+            reorder[order2] = order1
+            return ds1.isel(longitude=reorder).assign_coords(
+                longitude=ds2["longitude"].variable
+            )
+
+    raise NotImplementedError("Regridding not implemented")
 
 
 def align_grid_point(
