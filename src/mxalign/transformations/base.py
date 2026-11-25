@@ -1,3 +1,4 @@
+import numpy as np
 from .registry import register_transformation
 
 @register_transformation("rename")
@@ -92,3 +93,26 @@ def transform(ds, variables, min=None, max=None):
         if var in ds:
             ds[var] = ds[var].clip(min=min, max=max)
     return ds
+@register_transformation("select_points")
+def transform(ds, points_file, tolerance_deg=1e-3):
+    """Keep only the grid points whose (latitude, longitude) are in `points_file`.
+
+    `points_file` is a .npz with arrays `latitudes` and `longitudes` (e.g. the grid of a
+    trimmed-domain forecast). Each point of `ds` is matched to its nearest target point;
+    points farther than `tolerance_deg` are dropped. Original grid order is kept, so two
+    datasets on the same parent grid end up with identical grid_index order.
+
+    Typical use case: verify full-domain and trim_edge forecasts on one common (trimmed)
+    domain, since grid-grid alignment requires identical grids.
+    """
+    from scipy.spatial import cKDTree
+
+    pts = np.load(points_file)
+    target = np.column_stack([pts["latitudes"], ((pts["longitudes"] + 180) % 360) - 180])
+    lat = ds["latitude"].values.astype(np.float64)
+    lon = ((ds["longitude"].values.astype(np.float64) + 180) % 360) - 180
+    dist, _ = cKDTree(target).query(np.column_stack([lat, lon]), distance_upper_bound=tolerance_deg)
+    keep = np.flatnonzero(np.isfinite(dist))
+    if len(keep) != len(target):
+        raise ValueError(f"select_points: matched {len(keep)} points, expected {len(target)}")
+    return ds.isel(grid_index=keep)
