@@ -226,6 +226,20 @@ def test_complete_cases_needs_skipna():
     raise AssertionError("expected ValueError")
 
 
+def test_float32_inputs_are_pooled_in_float64():
+    """msl-like values in Pa: large offset, small spread, many points."""
+    rng = np.random.default_rng(11)
+    centre = rng.normal(101325, 800, (4, 50_000))
+    o = (centre + rng.normal(0, 60, centre.shape)).astype("float32")
+    f = (centre + rng.normal(0, 60, (5, *centre.shape))).astype("float32")
+    obs, fct = _make_ds(o, f)
+    obs, fct = obs.astype("float32"), fct.astype("float32")
+    out = spread_skill(obs, fct, DIM)
+    assert out["2t"].dtype == "float64"
+    want = _numpy_complete(o.astype("float64"), f.astype("float64"))
+    np.testing.assert_allclose(_curves(out), want, rtol=1e-12)
+
+
 def _main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

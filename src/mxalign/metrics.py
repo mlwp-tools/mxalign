@@ -334,7 +334,8 @@ def spread_skill(observations, forecasts, dim, member_dim="member", skipna=True,
           regional domain) and that is itself mildly ensemble-size
           dependent.  Kept only for reproducing results produced before
           this parameter existed: ``spread_method="mean_std", ddof=0``
-          reproduces the historical output exactly.
+          reproduces the historical output (up to float32 rounding, since the
+          reduction is now done in float64).
     complete_cases : bool
         If True, use only the cases where the observation and all members exist
         (after ``valid_range``), for both curves, as ``fair_crps`` and
@@ -347,7 +348,7 @@ def spread_skill(observations, forecasts, dim, member_dim="member", skipna=True,
     xr.Dataset
         For each variable a DataArray with a ``curve`` dimension
         (values: ``["spread", "rmse"]``) and remaining dims (typically
-        ``lead_time``).
+        ``lead_time``), in float64 whatever the dtype of the inputs.
     """
     if spread_method not in ("rms", "mean_std"):
         raise ValueError(
@@ -393,6 +394,10 @@ def spread_skill(observations, forecasts, dim, member_dim="member", skipna=True,
             valid = obs_v.notnull() & fct_v.notnull().all(member_dim)
             obs_v = obs_v.where(valid)
             fct_v = fct_v.where(valid)
+
+        # Pool in float64: float32 sums over millions of points lose digits
+        obs_v = obs_v.astype("float64")
+        fct_v = fct_v.astype("float64")
 
         ens_mean = fct_v.mean(dim=member_dim, skipna=skipna)
         ens_var = fct_v.var(dim=member_dim, ddof=ddof, skipna=skipna)
@@ -441,7 +446,7 @@ def unbiased_spread_skill(observations, forecasts, dim, member_dim="member", val
         raise ValueError(f"unbiased_spread_skill needs at least 2 members, got {members}")
 
     raw = spread_skill(observations, forecasts, dim, member_dim=member_dim,
-                       valid_range=valid_range, complete_cases=True).astype("float64")
+                       valid_range=valid_range, complete_cases=True)
     spread = raw.sel(curve="spread", drop=True)
     rmse = raw.sel(curve="rmse", drop=True)
     unbiased_mse = rmse**2 - spread**2 / members
