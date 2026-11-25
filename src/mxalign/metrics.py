@@ -268,7 +268,7 @@ def qq_plot_data(observations, forecasts, quantiles_min, quantiles_max, quantile
 
 
 def spread_skill(observations, forecasts, dim, member_dim="member", skipna=True,
-                 valid_range=None, ddof=1, spread_method="rms"):
+                 valid_range=None, ddof=1, spread_method="rms", complete_cases=False):
     """Ensemble spread and RMSE of the ensemble mean vs observations.
 
     Both curves are reduced over ``dim`` (typically ``reference_time`` and the
@@ -335,6 +335,12 @@ def spread_skill(observations, forecasts, dim, member_dim="member", skipna=True,
           dependent.  Kept only for reproducing results produced before
           this parameter existed: ``spread_method="mean_std", ddof=0``
           reproduces the historical output exactly.
+    complete_cases : bool
+        If True, use only the cases where the observation and all members exist
+        (after ``valid_range``), for both curves, as ``fair_crps`` and
+        ``n_cases`` do. Needs ``skipna=True``. If False (default), missing
+        members are skipped and the spread also uses the cases without an
+        observation.
 
     Returns
     -------
@@ -347,6 +353,9 @@ def spread_skill(observations, forecasts, dim, member_dim="member", skipna=True,
         raise ValueError(
             f"spread_method must be 'rms' or 'mean_std', got {spread_method!r}"
         )
+
+    if complete_cases and not skipna:
+        raise ValueError("complete_cases=True needs skipna=True")
 
     dim_list = [dim] if isinstance(dim, str) else list(dim)
 
@@ -379,6 +388,11 @@ def spread_skill(observations, forecasts, dim, member_dim="member", skipna=True,
             vmin, vmax = valid_range[var]
             obs_v = obs_v.where((obs_v >= vmin) & (obs_v <= vmax))
             fct_v = fct_v.where((fct_v >= vmin) & (fct_v <= vmax))
+
+        if complete_cases:
+            valid = obs_v.notnull() & fct_v.notnull().all(member_dim)
+            obs_v = obs_v.where(valid)
+            fct_v = fct_v.where(valid)
 
         ens_mean = fct_v.mean(dim=member_dim, skipna=skipna)
         ens_var = fct_v.var(dim=member_dim, ddof=ddof, skipna=skipna)

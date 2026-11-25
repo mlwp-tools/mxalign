@@ -171,6 +171,61 @@ def test_bad_spread_method_raises():
     raise AssertionError("expected ValueError for unknown spread_method")
 
 
+def _random_ds(n_m=5, n_t=4, n_p=60):
+    rng = np.random.default_rng(3)
+    return rng.normal(280, 5, (n_t, n_p)), rng.normal(280, 5, (n_m, n_t, n_p))
+
+
+def _numpy_complete(obs, fct):
+    """Independent computation over complete cases."""
+    x, y = fct.reshape(fct.shape[0], -1), obs.ravel()
+    ok = np.isfinite(y) & np.isfinite(x).all(axis=0)
+    x, y = x[:, ok], y[ok]
+    return np.sqrt(x.var(axis=0, ddof=1).mean()), np.sqrt(((x.mean(axis=0) - y) ** 2).mean())
+
+
+def _curves(ds):
+    return [float(ds["2t"].sel(curve=c).squeeze()) for c in ("spread", "rmse")]
+
+
+def test_complete_cases_without_nan_changes_nothing():
+    obs, fct = _make_ds(*_random_ds())
+    off = spread_skill(obs, fct, DIM)
+    on = spread_skill(obs, fct, DIM, complete_cases=True)
+    np.testing.assert_array_equal(on["2t"].values, off["2t"].values)
+
+
+def test_complete_cases_matches_numpy():
+    for m in (5, 10):
+        o, f = _random_ds(n_m=m)
+        o[1, 4:9] = np.nan          # observation missing
+        f[2, 0, 3] = np.nan         # one member missing
+        f[:2, 3, 7] = np.nan        # two members missing
+        obs, fct = _make_ds(o, f)
+        got = _curves(spread_skill(obs, fct, DIM, complete_cases=True))
+        np.testing.assert_allclose(got, _numpy_complete(o, f), rtol=1e-12)
+        off = _curves(spread_skill(obs, fct, DIM))
+        assert abs(off[0] / got[0] - 1) > 1e-6 and abs(off[1] / got[1] - 1) > 1e-6
+
+
+def test_complete_cases_applies_after_valid_range():
+    o, f = _random_ds()
+    f[0, 0, 0] = 1000.0             # outside valid_range -> member missing
+    obs, fct = _make_ds(o, f)
+    got = _curves(spread_skill(obs, fct, DIM, valid_range={"2t": [150, 360]}, complete_cases=True))
+    f[0, 0, 0] = np.nan
+    np.testing.assert_allclose(got, _numpy_complete(o, f), rtol=1e-12)
+
+
+def test_complete_cases_needs_skipna():
+    obs, fct = _make_ds(*_random_ds())
+    try:
+        spread_skill(obs, fct, DIM, skipna=False, complete_cases=True)
+    except ValueError:
+        return
+    raise AssertionError("expected ValueError")
+
+
 def _main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
