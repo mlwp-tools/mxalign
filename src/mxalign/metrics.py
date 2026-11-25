@@ -410,6 +410,47 @@ def spread_skill(observations, forecasts, dim, member_dim="member", skipna=True,
     return xr.Dataset(per_var)
 
 
+def unbiased_spread_skill(observations, forecasts, dim, member_dim="member", valid_range=None):
+    """Spread, RMSE, and their comparison corrected for the ensemble size.
+
+    Calls ``spread_skill`` (``spread_method="rms"``, ``ddof=1``) on complete
+    cases only, and adds two curves, for an ensemble of ``M`` members::
+
+        unbiased_rmse               = sqrt( rmse^2 - spread^2 / M )
+        unbiased_spread_skill_ratio = spread / unbiased_rmse
+
+    ``rmse^2`` contains the sampling error of the mean of ``M`` members, which is
+    ``spread^2 / M`` on average; it is removed here. For a calibrated ensemble
+    ``unbiased_rmse`` equals ``spread`` and the ratio is 1, for any ``M`` (below
+    1: under-dispersive). Both curves are computed from the pooled values and
+    are NaN where ``rmse^2 < spread^2 / M``.
+
+    Parameters
+    ----------
+    observations, forecasts, dim, member_dim, valid_range
+        See ``spread_skill``.
+
+    Returns
+    -------
+    xr.Dataset
+        Per variable, a ``curve`` dimension: ``["spread", "rmse",
+        "unbiased_rmse", "unbiased_spread_skill_ratio"]``.
+    """
+    members = forecasts.sizes[member_dim]
+    if members < 2:
+        raise ValueError(f"unbiased_spread_skill needs at least 2 members, got {members}")
+
+    raw = spread_skill(observations, forecasts, dim, member_dim=member_dim,
+                       valid_range=valid_range, complete_cases=True).astype("float64")
+    spread = raw.sel(curve="spread", drop=True)
+    rmse = raw.sel(curve="rmse", drop=True)
+    unbiased_mse = rmse**2 - spread**2 / members
+    unbiased_rmse = np.sqrt(unbiased_mse.where(unbiased_mse >= 0))
+    ratio = spread / unbiased_rmse
+    names = ["spread", "rmse", "unbiased_rmse", "unbiased_spread_skill_ratio"]
+    return xr.concat([spread, rmse, unbiased_rmse, ratio], dim=xr.Variable("curve", names))
+
+
 def _common_cases(fcst, obs, member_dim):
     """Variables common to both datasets, and their valid cases.
 
