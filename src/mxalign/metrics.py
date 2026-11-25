@@ -524,6 +524,66 @@ def fair_crps(fcst, obs, reduce_dims, ensemble_member_dim="member"):
     )
 
 
+def reliability_diagram(fcst, obs, thresholds, reduce_dims, ensemble_member_dim="member"):
+    """Reliability diagram of the event ``value > threshold``, on complete cases.
+
+    The forecast probability is the fraction of members above the threshold. With
+    ``M`` members it takes the values ``k / M`` only (``k = 0..M``), which are the
+    bins of the diagram. Same definition as in anemoi-evaluation: ``>`` is strict
+    and compared in float64.
+
+    Parameters
+    ----------
+    fcst : xr.Dataset
+        Ensemble forecast, dims (..., member, lead_time, point_index/grid_index).
+    obs : xr.Dataset
+        Reference dataset, dims (..., lead_time, point_index/grid_index).
+    thresholds : dict
+        One threshold per variable, in the units of the data, e.g.
+        {"10si": 10.0}. Only these variables are returned; use one metric per
+        event for several thresholds.
+    reduce_dims : str or list of str
+        Dimensions to pool over (e.g. ["point_index", "reference_time"]).
+    ensemble_member_dim : str
+        Name of the ensemble member dimension (default: "member").
+
+    Returns
+    -------
+    xr.Dataset
+        Per variable, dims (curve, probability, ...) with the curves:
+
+        - ``reliability``: observed frequency of the event in the bin (NaN if
+          the bin is empty); on the diagonal if calibrated
+        - ``forecast_frequency``: fraction of the cases in the bin
+        - ``n_forecasts``, ``n_events``: number of cases in the bin, and of those
+          where the event was observed (sums, to pool several results)
+    """
+    missing = [v for v in thresholds if v not in obs.data_vars or v not in fcst.data_vars]
+    if missing:
+        raise ValueError(f"thresholds given for variables that are not in both datasets: {missing}")
+
+    names = list(thresholds)
+    fcst, obs, valid = _common_cases(fcst[names], obs[names], ensemble_member_dim)
+    members = fcst.sizes[ensemble_member_dim]
+    probability = xr.Variable("probability", np.arange(members + 1) / members)
+
+    per_var = {}
+    for var, threshold in thresholds.items():
+        above = (fcst[var].astype("float64") > threshold).sum(ensemble_member_dim)
+        event = obs[var].astype("float64") > threshold
+        in_bin = [valid[var] & (above == k) for k in range(members + 1)]
+        n_forecasts = xr.concat([b.sum(reduce_dims) for b in in_bin], dim=probability).astype("float64")
+        n_events = xr.concat([(b & event).sum(reduce_dims) for b in in_bin], dim=probability).astype("float64")
+        total = n_forecasts.sum("probability")
+        per_var[var] = xr.concat(
+            [n_events / n_forecasts.where(n_forecasts > 0), n_forecasts / total.where(total > 0),
+             n_forecasts, n_events],
+            dim=xr.Variable("curve", ["reliability", "forecast_frequency", "n_forecasts", "n_events"]),
+        )
+
+    return xr.Dataset(per_var)
+
+
 def brier_score(fcst, obs, threshold_min, threshold_max, threshold_by,
                 reduce_dims, ensemble_member_dim="member", variables=None,
                 fair_correction=False):
