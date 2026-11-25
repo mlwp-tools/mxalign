@@ -395,6 +395,34 @@ def spread_skill(observations, forecasts, dim, member_dim="member", skipna=True,
     return xr.Dataset(per_var)
 
 
+def n_cases(fcst, obs, reduce_dims, ensemble_member_dim="member"):
+    """Number of valid cases behind an ensemble score.
+
+    A case counts only if neither the observation nor any member is NaN.
+    Variables present in both datasets are counted.
+
+    Parameters
+    ----------
+    fcst : xr.Dataset
+        Ensemble forecast, dims (..., member, lead_time, point_index/grid_index).
+    obs : xr.Dataset
+        Reference dataset, dims (..., lead_time, point_index/grid_index).
+    reduce_dims : str or list of str
+        Dimensions to count over (e.g. ["point_index", "reference_time"]).
+    ensemble_member_dim : str
+        Name of the ensemble member dimension (default: "member").
+
+    Returns
+    -------
+    xr.Dataset
+        Number of valid cases (float64) per variable and remaining dims.
+    """
+    variables = [v for v in obs.data_vars if v in fcst.data_vars]
+    fcst, obs = fcst[variables], obs[variables]
+    valid = obs.notnull() & fcst.notnull().all(ensemble_member_dim)
+    return valid.sum(reduce_dims).astype("float64")
+
+
 def brier_score(fcst, obs, threshold_min, threshold_max, threshold_by,
                 reduce_dims, ensemble_member_dim="member", variables=None,
                 fair_correction=False):
