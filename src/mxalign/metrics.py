@@ -1,6 +1,7 @@
 import numpy as np
 import xarray as xr
 from scipy.fft import dctn
+from scores.probability import crps_for_ensemble
 from scores.processing import binary_discretise
 
 
@@ -395,6 +396,17 @@ def spread_skill(observations, forecasts, dim, member_dim="member", skipna=True,
     return xr.Dataset(per_var)
 
 
+def _common_cases(fcst, obs, member_dim):
+    """Variables common to both datasets, and their valid cases.
+
+    A case is valid if neither the observation nor any member is NaN.
+    """
+    variables = [v for v in obs.data_vars if v in fcst.data_vars]
+    fcst, obs = fcst[variables], obs[variables]
+    valid = obs.notnull() & fcst.notnull().all(member_dim)
+    return fcst, obs, valid
+
+
 def n_cases(fcst, obs, reduce_dims, ensemble_member_dim="member"):
     """Number of valid cases behind an ensemble score.
 
@@ -417,10 +429,39 @@ def n_cases(fcst, obs, reduce_dims, ensemble_member_dim="member"):
     xr.Dataset
         Number of valid cases (float64) per variable and remaining dims.
     """
-    variables = [v for v in obs.data_vars if v in fcst.data_vars]
-    fcst, obs = fcst[variables], obs[variables]
-    valid = obs.notnull() & fcst.notnull().all(ensemble_member_dim)
+    _, _, valid = _common_cases(fcst, obs, ensemble_member_dim)
     return valid.sum(reduce_dims).astype("float64")
+
+
+def fair_crps(fcst, obs, reduce_dims, ensemble_member_dim="member"):
+    """Fair CRPS over the cases where the observation and all members exist.
+
+    ``scores.probability.crps_for_ensemble(method="fair")`` scores a case with
+    missing members using the members that are left. Here such a case is left
+    out, so every case is scored with the full ensemble and the number of cases
+    is the one given by ``n_cases``. Without NaN both functions are identical.
+
+    Parameters
+    ----------
+    fcst : xr.Dataset
+        Ensemble forecast, dims (..., member, lead_time, point_index/grid_index).
+    obs : xr.Dataset
+        Reference dataset, dims (..., lead_time, point_index/grid_index).
+    reduce_dims : str or list of str
+        Dimensions to average over (e.g. ["point_index", "reference_time"]).
+    ensemble_member_dim : str
+        Name of the ensemble member dimension (default: "member").
+
+    Returns
+    -------
+    xr.Dataset
+        Fair CRPS per variable and remaining dims, NaN where no case is valid.
+    """
+    fcst, obs, valid = _common_cases(fcst, obs, ensemble_member_dim)
+    return crps_for_ensemble(
+        fcst.where(valid), obs.where(valid), ensemble_member_dim=ensemble_member_dim,
+        method="fair", reduce_dims=reduce_dims,
+    )
 
 
 def brier_score(fcst, obs, threshold_min, threshold_max, threshold_by,
