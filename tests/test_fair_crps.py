@@ -9,7 +9,7 @@ import numpy as np
 import xarray as xr
 from scores.probability import crps_for_ensemble
 
-from mxalign.metrics import fair_crps, n_cases
+from mxalign.metrics import bias, fair_crps, n_cases
 
 DIMS = ["reference_time", "point_index"]
 
@@ -82,6 +82,18 @@ def test_dask_gives_the_same():
     fct["2t"][2, 0, 1, 3] = np.nan
     lazy = fair_crps(fct.chunk({"member": -1, "lead_time": 1}), obs.chunk({"lead_time": 1}), DIMS)
     np.testing.assert_allclose(lazy["2t"].values, fair_crps(fct, obs, DIMS)["2t"].values, rtol=1e-14)
+
+
+def test_bias_on_complete_cases():
+    obs, fct = _make_ds(dtype="float32")
+    fct["2t"][2, 0, 1, 3] = np.nan
+    obs["2t"][1, 0, 5:9] = np.nan
+    x, y = fct["2t"].values.astype("float64"), obs["2t"].values.astype("float64")
+    ok = np.isfinite(y) & np.isfinite(x).all(axis=0)
+    want = [np.where(ok, x.mean(axis=0) - y, np.nan)[:, k][ok[:, k]].mean() for k in range(x.shape[2])]
+    got = bias(fct, obs, DIMS)["2t"]
+    assert got.dtype == "float64"
+    np.testing.assert_allclose(got.values, want, rtol=1e-12)
 
 
 def _main():

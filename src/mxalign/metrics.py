@@ -493,6 +493,33 @@ def n_cases(fcst, obs, reduce_dims, ensemble_member_dim="member"):
     return valid.sum(reduce_dims).astype("float64")
 
 
+def bias(fcst, obs, reduce_dims, ensemble_member_dim="member"):
+    """Bias of the ensemble mean (ensemble mean minus observation), on complete cases, in float64.
+
+    Same cases as ``fair_crps`` and ``n_cases``: a case counts only if neither the
+    observation nor any member is NaN.
+
+    Parameters
+    ----------
+    fcst : xr.Dataset
+        Ensemble forecast, dims (..., member, lead_time, point_index/grid_index).
+    obs : xr.Dataset
+        Reference dataset, dims (..., lead_time, point_index/grid_index).
+    reduce_dims : str or list of str
+        Dimensions to average over (e.g. ["point_index", "reference_time"]).
+    ensemble_member_dim : str
+        Name of the ensemble member dimension (default: "member").
+
+    Returns
+    -------
+    xr.Dataset
+        Mean error per variable and remaining dims, NaN where no case is valid.
+    """
+    fcst, obs, valid = _common_cases(fcst, obs, ensemble_member_dim)
+    error = fcst.astype("float64").mean(ensemble_member_dim) - obs.astype("float64")
+    return error.where(valid).mean(reduce_dims)
+
+
 def fair_crps(fcst, obs, reduce_dims, ensemble_member_dim="member"):
     """Fair CRPS over the cases where the observation and all members exist.
 
